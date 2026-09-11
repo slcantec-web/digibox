@@ -1095,109 +1095,135 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
         )}
 
         {/* TAB: Analytics (Spec #20, #21, #63) */}
-        {activeTab === 'analytics' && stats && (
+        {activeTab === 'analytics' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Top Repeated Suggestions */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                    <Lightbulb className="w-4 h-4 text-amber-500" />
-                    Top Repeated Suggestions (Head Count)
-                  </h3>
-                  <span className="text-xs text-slate-400">Repeated feedback rank</span>
-                </div>
+            {!stats ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+                <RefreshCw className="w-6 h-6 text-teal-600 animate-spin mx-auto mb-3" />
+                <p className="text-sm font-semibold text-slate-700">Loading analytics data...</p>
+                <p className="text-xs text-slate-400 mt-1">Calculating cluster reports and counts</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Top Repeated Suggestions */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      <Lightbulb className="w-4 h-4 text-amber-500" />
+                      Top Repeated Suggestions (Head Count)
+                    </h3>
+                    <span className="text-xs text-slate-400">Repeated feedback rank</span>
+                  </div>
 
-                <div className="space-y-3">
-                  {stats.top_repeated_suggestions.map((item, index) => (
-                    <div
-                      key={index}
-                      className="p-3 rounded-xl bg-amber-50/40 border border-amber-100 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="w-6 h-6 rounded-full bg-amber-200/80 text-amber-900 text-xs font-bold flex items-center justify-center shrink-0">
-                          {index + 1}
-                        </span>
-                        <div>
-                          <div className="text-xs font-bold text-slate-900">
-                            {item.group_title || item.message}
+                  {(!stats.top_repeated_suggestions || stats.top_repeated_suggestions.length === 0) ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      No repeated suggestions or clusters identified yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {stats.top_repeated_suggestions.map((item, index) => (
+                        <div
+                          key={index}
+                          className="p-3 rounded-xl bg-amber-50/40 border border-amber-100 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="w-6 h-6 rounded-full bg-amber-200/80 text-amber-900 text-xs font-bold flex items-center justify-center shrink-0">
+                              {index + 1}
+                            </span>
+                            <div>
+                              <div className="text-xs font-bold text-slate-900">
+                                {item.group_title || item.message}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                {item.count} total submissions
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">
-                            {item.count} total submissions
+
+                          <div className="text-right shrink-0">
+                            <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded block">
+                              {item.estimated_devices} devices
+                            </span>
                           </div>
                         </div>
-                      </div>
-
-                      <div className="text-right shrink-0">
-                        <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded block">
-                          {item.estimated_devices} devices
-                        </span>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Complaints Breakdown */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-500" />
-                    Complaints Status Distribution
-                  </h3>
-                  <span className="text-xs text-slate-400">Workflow pipeline</span>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  {Object.entries(stats.complaint_status_counts).map(([status, count]) => (
-                    <div key={status} className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                      <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                        {status}
-                      </span>
-                      <span className="text-xl font-black text-slate-900 block mt-1">
-                        {count}
-                      </span>
+                {/* Complaints Breakdown */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-500" />
+                      Complaints Status Distribution
+                    </h3>
+                    <span className="text-xs text-slate-400">Workflow pipeline</span>
+                  </div>
+
+                  {Object.keys(stats.complaint_status_counts || {}).length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      No complaint data recorded yet.
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Feedback Boxes Distribution */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs lg:col-span-2">
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                    <Building2 className="w-4 h-4 text-sky-600" />
-                    Feedback Breakdown by Location / Box
-                  </h3>
-                  <span className="text-xs text-slate-400">Multi-box tracking</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  {stats.boxes_breakdown.map((b) => (
-                    <div
-                      key={b.box_code}
-                      className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between"
-                    >
-                      <div>
-                        <span className="text-[10px] font-bold font-mono text-slate-400 block">
-                          {b.box_code}
-                        </span>
-                        <div className="text-xs font-bold text-slate-900 mt-0.5 line-clamp-1">
-                          {b.title}
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.entries(stats.complaint_status_counts || {}).map(([status, count]) => (
+                        <div key={status} className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                            {status}
+                          </span>
+                          <span className="text-xl font-black text-slate-900 block mt-1">
+                            {count}
+                          </span>
                         </div>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-800">{b.total} total</span>
-                        <span className="text-[11px] text-slate-500">
-                          {b.suggestions} 💡 / {b.complaints} ⚠
-                        </span>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </div>
+
+                {/* Feedback Boxes Distribution */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs lg:col-span-2">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-sky-600" />
+                      Feedback Breakdown by Location / Box
+                    </h3>
+                    <span className="text-xs text-slate-400">Multi-box tracking</span>
+                  </div>
+
+                  {(!stats.boxes_breakdown || stats.boxes_breakdown.length === 0) ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      No boxes configured or no submissions yet.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                      {stats.boxes_breakdown.map((b) => (
+                        <div
+                          key={b.box_code}
+                          className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between"
+                        >
+                          <div>
+                            <span className="text-[10px] font-bold font-mono text-slate-400 block">
+                              {b.box_code}
+                            </span>
+                            <div className="text-xs font-bold text-slate-900 mt-0.5 line-clamp-1">
+                              {b.title}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                            <span className="font-bold text-slate-800">{b.total} total</span>
+                            <span className="text-[11px] text-slate-500">
+                              {b.suggestions} 💡 / {b.complaints} ⚠
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

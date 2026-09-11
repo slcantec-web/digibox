@@ -1499,6 +1499,14 @@
       "created_at": "2026-09-11T12:31:51.835Z",
       "expires_at": "2026-09-18T12:31:51.835Z",
       "last_activity_at": "2026-09-11T12:31:51.835Z"
+    },
+    {
+      "id": "2ebc6e2b7517b1e58c5578f712d00daecc8e9717d2f7f3fb8997208ea27220f4",
+      "operator_id": "op-admin-1",
+      "session_hash": "3fb515d16a7dd1bdc23936eabb937059e8e2b7f1b10d1a5985bbe7dfe2cf5167",
+      "created_at": "2026-09-11T12:50:00.673Z",
+      "expires_at": "2026-09-18T12:50:00.673Z",
+      "last_activity_at": "2026-09-11T12:50:00.673Z"
     }
   ],
   "daily_reports": [

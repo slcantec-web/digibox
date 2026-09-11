@@ -533,6 +533,125 @@ export default {
             .bind(orgId)
             .all();
 
+          // Status counts
+          const { results: statusRows } = await env.DB.prepare(
+            `SELECT type, status, COUNT(*) as count FROM submissions WHERE organization_id = ? GROUP BY type, status`
+          )
+            .bind(orgId)
+            .all();
+
+          const suggestion_status_counts: Record<string, number> = {
+            'New': 0,
+            'Reviewed': 0,
+            'In Progress': 0,
+            'Implemented': 0,
+            'Rejected': 0,
+          };
+          const complaint_status_counts: Record<string, number> = {
+            'New': 0,
+            'Investigating': 0,
+            'Action Taken': 0,
+            'Resolved': 0,
+            'Closed': 0,
+          };
+
+          (statusRows || []).forEach((r: any) => {
+            if (r.type === 'suggestion') {
+              suggestion_status_counts[r.status] = r.count;
+            } else if (r.type === 'complaint') {
+              complaint_status_counts[r.status] = r.count;
+            }
+          });
+
+          // Top repeated groups
+          const { results: topGroups } = await env.DB.prepare(
+            `SELECT g.id, g.title as group_title, g.type,
+                    COUNT(sgm.submission_id) as count,
+                    COUNT(DISTINCT s.device_token_hash) as estimated_devices
+             FROM feedback_groups g
+             LEFT JOIN submission_group_members sgm ON sgm.group_id = g.id
+             LEFT JOIN submissions s ON s.id = sgm.submission_id
+             WHERE g.organization_id = ?
+             GROUP BY g.id
+             ORDER BY count DESC
+             LIMIT 10`
+          )
+            .bind(orgId)
+            .all();
+
+          const top_repeated_suggestions: Array<{
+            message: string;
+            count: number;
+            estimated_devices: number;
+            group_title?: string;
+          }> = (topGroups || [])
+            .filter((g: any) => g.type === 'suggestion' && g.count > 0)
+            .map((g: any) => ({
+              message: g.group_title,
+              group_title: g.group_title,
+              count: g.count,
+              estimated_devices: Math.max(1, g.estimated_devices || 1),
+            }));
+
+          const top_repeated_complaints: Array<{
+            message: string;
+            count: number;
+            estimated_devices: number;
+            group_title?: string;
+          }> = (topGroups || [])
+            .filter((g: any) => g.type === 'complaint' && g.count > 0)
+            .map((g: any) => ({
+              message: g.group_title,
+              group_title: g.group_title,
+              count: g.count,
+              estimated_devices: Math.max(1, g.estimated_devices || 1),
+            }));
+
+          // Fallback to repeated message hashes if no groups have members yet
+          if (top_repeated_suggestions.length === 0) {
+            const { results: repSuggestions } = await env.DB.prepare(
+              `SELECT message, COUNT(*) as count, COUNT(DISTINCT device_token_hash) as estimated_devices
+               FROM submissions
+               WHERE organization_id = ? AND type = 'suggestion'
+               GROUP BY message_hash
+               ORDER BY count DESC
+               LIMIT 5`
+            )
+              .bind(orgId)
+              .all();
+
+            (repSuggestions || []).forEach((m: any) => {
+              top_repeated_suggestions.push({
+                message: m.message,
+                group_title: m.message,
+                count: m.count,
+                estimated_devices: m.estimated_devices || 1,
+              });
+            });
+          }
+
+          if (top_repeated_complaints.length === 0) {
+            const { results: repComplaints } = await env.DB.prepare(
+              `SELECT message, COUNT(*) as count, COUNT(DISTINCT device_token_hash) as estimated_devices
+               FROM submissions
+               WHERE organization_id = ? AND type = 'complaint'
+               GROUP BY message_hash
+               ORDER BY count DESC
+               LIMIT 5`
+            )
+              .bind(orgId)
+              .all();
+
+            (repComplaints || []).forEach((m: any) => {
+              top_repeated_complaints.push({
+                message: m.message,
+                group_title: m.message,
+                count: m.count,
+                estimated_devices: m.estimated_devices || 1,
+              });
+            });
+          }
+
           return json({
             total_feedback: totalRow?.total || 0,
             total_suggestions: totalRow?.suggestions || 0,
@@ -542,6 +661,10 @@ export default {
             anonymous_percentage: totalRow?.total
               ? Math.round(((totalRow.anonymous_count || 0) / totalRow.total) * 100)
               : 0,
+            suggestion_status_counts,
+            complaint_status_counts,
+            top_repeated_suggestions,
+            top_repeated_complaints,
             boxes_breakdown: boxRows || [],
           });
         }
