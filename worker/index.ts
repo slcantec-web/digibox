@@ -125,7 +125,14 @@ export default {
             .all();
 
           return json({
-            organization: { id: org.id, name: org.name, code: org.code },
+            organization: {
+              id: org.id,
+              name: org.name,
+              code: org.code,
+              welcome_message: (org as any).welcome_message || '',
+              thank_you_message: (org as any).thank_you_message || '',
+              contact_email: (org as any).contact_email || '',
+            },
             boxes: boxes || [],
           });
         }
@@ -183,10 +190,11 @@ export default {
             .run();
 
           // Return generic confirmation to public (No IDs or hashes exposed!)
+          const orgRecord = await env.DB.prepare(`SELECT thank_you_message FROM organizations WHERE id = ?`).bind(box.organization_id).first();
           return json({
             success: true,
             title: 'Thank You!',
-            message: 'Your feedback has been submitted successfully. Your feedback helps us improve.',
+            message: (orgRecord as any)?.thank_you_message || 'Your feedback has been submitted successfully. Your feedback helps us improve.',
           });
         }
 
@@ -426,6 +434,213 @@ export default {
             .bind(subId)
             .first();
           return json(updated);
+        }
+
+        // Delete submission
+        if (path.startsWith('/api/operator/submissions/') && request.method === 'DELETE') {
+          const subId = path.split('/')[4];
+          await env.DB.prepare(
+            `DELETE FROM feedback_notes WHERE submission_id = ?`
+          ).bind(subId).run();
+          await env.DB.prepare(
+            `DELETE FROM submission_group_members WHERE submission_id = ?`
+          ).bind(subId).run();
+          await env.DB.prepare(
+            `DELETE FROM submissions WHERE id = ? AND organization_id = ?`
+          ).bind(subId, auth.operator.organization_id).run();
+          return json({ success: true, message: 'Submission deleted' });
+        }
+
+        // Feedback Boxes CRUD
+        if (path === '/api/operator/boxes') {
+          if (request.method === 'GET') {
+            const { results: boxes } = await env.DB.prepare(
+              `SELECT * FROM feedback_boxes WHERE organization_id = ? ORDER BY created_at DESC`
+            ).bind(auth.operator.organization_id).all();
+            return json({ boxes: boxes || [] });
+          }
+
+          if (request.method === 'POST') {
+            const { title, box_code, description, public_enabled } = (await request.json()) as any;
+            if (!title || !box_code) return json({ error: 'Title and box_code are required' }, 400);
+
+            const code = box_code.trim().toUpperCase();
+            const existing = await env.DB.prepare(
+              `SELECT id FROM feedback_boxes WHERE box_code = ?`
+            ).bind(code).first();
+            if (existing) return json({ error: 'Box code already exists' }, 400);
+
+            const boxId = `box-${Date.now()}`;
+            await env.DB.prepare(
+              `INSERT INTO feedback_boxes (id, organization_id, box_code, title, description, public_enabled) VALUES (?, ?, ?, ?, ?, ?)`
+            ).bind(
+              boxId,
+              auth.operator.organization_id,
+              code,
+              title.trim(),
+              description?.trim() || '',
+              public_enabled !== false ? 1 : 0
+            ).run();
+
+            const box = await env.DB.prepare(`SELECT * FROM feedback_boxes WHERE id = ?`).bind(boxId).first();
+            return json({ success: true, box });
+          }
+        }
+
+        if (path.startsWith('/api/operator/boxes/') && request.method === 'PATCH') {
+          const boxId = path.split('/')[4];
+          const { title, box_code, description, public_enabled } = (await request.json()) as any;
+          if (box_code) {
+            const code = box_code.trim().toUpperCase();
+            const dup = await env.DB.prepare(
+              `SELECT id FROM feedback_boxes WHERE box_code = ? AND id != ?`
+            ).bind(code, boxId).first();
+            if (dup) return json({ error: 'Box code already taken' }, 400);
+          }
+
+          await env.DB.prepare(
+            `UPDATE feedback_boxes SET 
+              title = COALESCE(?, title),
+              box_code = COALESCE(?, box_code),
+              description = COALESCE(?, description),
+              public_enabled = COALESCE(?, public_enabled),
+              updated_at = datetime('now')
+             WHERE id = ? AND organization_id = ?`
+          ).bind(
+            title ? title.trim() : null,
+            box_code ? box_code.trim().toUpperCase() : null,
+            description !== undefined ? description.trim() : null,
+            public_enabled !== undefined ? (public_enabled ? 1 : 0) : null,
+            boxId,
+            auth.operator.organization_id
+          ).run();
+
+          const updated = await env.DB.prepare(`SELECT * FROM feedback_boxes WHERE id = ?`).bind(boxId).first();
+          return json({ success: true, box: updated });
+        }
+
+        if (path.startsWith('/api/operator/boxes/') && request.method === 'DELETE') {
+          const boxId = path.split('/')[4];
+          await env.DB.prepare(
+            `DELETE FROM feedback_boxes WHERE id = ? AND organization_id = ?`
+          ).bind(boxId, auth.operator.organization_id).run();
+          return json({ success: true, message: 'Box deleted successfully' });
+        }
+
+        // Users (Operators) CRUD
+        if (path === '/api/operator/users') {
+          if (request.method === 'GET') {
+            const { results: users } = await env.DB.prepare(
+              `SELECT id, organization_id, username, role, status, created_at, last_login_at FROM operators WHERE organization_id = ? ORDER BY created_at ASC`
+            ).bind(auth.operator.organization_id).all();
+            return json({ users: users || [] });
+          }
+
+          if (request.method === 'POST') {
+            if (auth.operator.role !== 'admin') {
+              return json({ error: 'Admin role required to manage users' }, 403);
+            }
+            const { username, password, role } = (await request.json()) as any;
+            if (!username || !password) return json({ error: 'Username and password required' }, 400);
+
+            const uname = username.trim().toLowerCase();
+            const existing = await env.DB.prepare(`SELECT id FROM operators WHERE username = ?`).bind(uname).first();
+            if (existing) return json({ error: 'Username already in use' }, 400);
+
+            const salt = crypto.randomUUID();
+            const hash = await sha256(password + salt);
+            const newId = `op-${Date.now()}`;
+
+            await env.DB.prepare(
+              `INSERT INTO operators (id, organization_id, username, password_hash, password_salt, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(newId, auth.operator.organization_id, uname, hash, salt, role || 'operator', 'active').run();
+
+            const user = await env.DB.prepare(
+              `SELECT id, organization_id, username, role, status, created_at FROM operators WHERE id = ?`
+            ).bind(newId).first();
+            return json({ success: true, user });
+          }
+        }
+
+        if (path.startsWith('/api/operator/users/') && request.method === 'PATCH') {
+          if (auth.operator.role !== 'admin') {
+            return json({ error: 'Admin role required to manage users' }, 403);
+          }
+          const targetId = path.split('/')[4];
+          const { role, status, password } = (await request.json()) as any;
+
+          if (password && password.trim()) {
+            const salt = crypto.randomUUID();
+            const hash = await sha256(password.trim() + salt);
+            await env.DB.prepare(
+              `UPDATE operators SET password_hash = ?, password_salt = ? WHERE id = ? AND organization_id = ?`
+            ).bind(hash, salt, targetId, auth.operator.organization_id).run();
+          }
+
+          await env.DB.prepare(
+            `UPDATE operators SET 
+              role = COALESCE(?, role),
+              status = COALESCE(?, status)
+             WHERE id = ? AND organization_id = ?`
+          ).bind(role || null, status || null, targetId, auth.operator.organization_id).run();
+
+          const updated = await env.DB.prepare(
+            `SELECT id, organization_id, username, role, status, created_at, last_login_at FROM operators WHERE id = ?`
+          ).bind(targetId).first();
+          return json({ success: true, user: updated });
+        }
+
+        if (path.startsWith('/api/operator/users/') && request.method === 'DELETE') {
+          if (auth.operator.role !== 'admin') {
+            return json({ error: 'Admin role required to remove users' }, 403);
+          }
+          const targetId = path.split('/')[4];
+          if (targetId === auth.operator.id) {
+            return json({ error: 'Cannot delete your own active operator account' }, 400);
+          }
+          await env.DB.prepare(
+            `DELETE FROM operators WHERE id = ? AND organization_id = ?`
+          ).bind(targetId, auth.operator.organization_id).run();
+          return json({ success: true, message: 'User deleted' });
+        }
+
+        // Organization Details
+        if (path === '/api/operator/organization') {
+          if (request.method === 'GET') {
+            const org = await env.DB.prepare(
+              `SELECT * FROM organizations WHERE id = ?`
+            ).bind(auth.operator.organization_id).first();
+            return json({ organization: org });
+          }
+
+          if (request.method === 'PATCH') {
+            if (auth.operator.role !== 'admin') {
+              return json({ error: 'Admin role required to modify organization settings' }, 403);
+            }
+            const { name, code, contact_email, welcome_message, thank_you_message } = (await request.json()) as any;
+            await env.DB.prepare(
+              `UPDATE organizations SET
+                name = COALESCE(?, name),
+                code = COALESCE(?, code),
+                contact_email = COALESCE(?, contact_email),
+                welcome_message = COALESCE(?, welcome_message),
+                thank_you_message = COALESCE(?, thank_you_message),
+                updated_at = datetime('now')
+               WHERE id = ?`
+            ).bind(
+              name ? name.trim() : null,
+              code ? code.trim().toUpperCase() : null,
+              contact_email !== undefined ? contact_email.trim() : null,
+              welcome_message !== undefined ? welcome_message.trim() : null,
+              thank_you_message !== undefined ? thank_you_message.trim() : null,
+              auth.operator.organization_id
+            ).run();
+
+            const updated = await env.DB.prepare(
+              `SELECT * FROM organizations WHERE id = ?`
+            ).bind(auth.operator.organization_id).first();
+            return json({ success: true, organization: updated });
+          }
         }
 
         // Add internal note

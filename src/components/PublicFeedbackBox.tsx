@@ -30,6 +30,8 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
   const [selectedBoxCode, setSelectedBoxCode] = useState<string>(initialBoxCode);
   const [currentBox, setCurrentBox] = useState<FeedbackBox | null>(null);
   const [orgName, setOrgName] = useState<string>('Cantec Printing & Packaging');
+  const [welcomeMessage, setWelcomeMessage] = useState<string>('');
+  const [thankYouMessage, setThankYouMessage] = useState<string>('');
   const [loadingConfig, setLoadingConfig] = useState<boolean>(true);
 
   // Form State
@@ -40,6 +42,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
   const [submitterContact, setSubmitterContact] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitted, setSubmitted] = useState<boolean>(false);
+  const [submittedResponseMsg, setSubmittedResponseMsg] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [boxSelectorOpen, setBoxSelectorOpen] = useState<boolean>(false);
 
@@ -53,6 +56,12 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
           setBoxes(data.boxes || []);
           if (data.organization?.name) {
             setOrgName(data.organization.name);
+          }
+          if (data.organization?.welcome_message) {
+            setWelcomeMessage(data.organization.welcome_message);
+          }
+          if (data.organization?.thank_you_message) {
+            setThankYouMessage(data.organization.thank_you_message);
           }
           const matched = data.boxes?.find(
             (b: FeedbackBox) => b.box_code.toUpperCase() === selectedBoxCode.toUpperCase()
@@ -128,6 +137,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
         throw new Error(data.error || 'Failed to submit feedback. Please try again.');
       }
 
+      setSubmittedResponseMsg(data.message || '');
       setSubmitted(true);
     } catch (err: any) {
       setErrorMessage(err.message || 'An unexpected error occurred. Please check your network.');
@@ -143,6 +153,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
     setIsAnonymous(true);
     setCategory(null);
     setSubmitted(false);
+    setSubmittedResponseMsg('');
     setErrorMessage(null);
   };
 
@@ -265,7 +276,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
               Thank You!
             </h2>
             <p className="text-base font-medium text-slate-700 mb-1">
-              Your feedback has been submitted successfully.
+              {submittedResponseMsg || thankYouMessage || 'Your feedback has been submitted successfully.'}
             </p>
             <p className="text-sm text-slate-500 mb-6">
               Your feedback helps us improve. You may close this page now.
@@ -301,7 +312,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                 How can we help?
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Choose a feedback category to get started. No account needed.
+                {welcomeMessage || 'Choose a feedback category to get started. No account needed.'}
               </p>
             </div>
 

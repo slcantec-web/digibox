@@ -99,6 +99,9 @@ class D1DatabaseStore {
       name: 'Cantec Printing & Packaging',
       code: 'CTP',
       status: 'active',
+      contact_email: 'management@cantec.lk',
+      welcome_message: 'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.',
+      thank_you_message: 'Thank you for your valuable feedback! Our management team reviews all submissions promptly.',
       created_at: now,
       updated_at: now,
     };
@@ -536,6 +539,162 @@ class D1DatabaseStore {
 
   public getAllFeedbackBoxes(orgId: string): FeedbackBox[] {
     return this.data.feedback_boxes.filter((b) => b.organization_id === orgId);
+  }
+
+  public createFeedbackBox(payload: {
+    organization_id: string;
+    box_code: string;
+    title: string;
+    description?: string;
+    public_enabled?: boolean;
+  }): FeedbackBox {
+    const existing = this.getFeedbackBoxByCode(payload.box_code);
+    if (existing) {
+      throw new Error(`Feedback box with code "${payload.box_code}" already exists.`);
+    }
+    const now = new Date().toISOString();
+    const box: FeedbackBox = {
+      id: `box-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      organization_id: payload.organization_id,
+      box_code: payload.box_code.trim().toUpperCase(),
+      title: payload.title.trim(),
+      description: payload.description?.trim() || '',
+      public_enabled: payload.public_enabled !== false,
+      created_at: now,
+      updated_at: now,
+    };
+    this.data.feedback_boxes.push(box);
+    this.saveData();
+    return box;
+  }
+
+  public updateFeedbackBox(
+    id: string,
+    orgId: string,
+    updates: Partial<Pick<FeedbackBox, 'title' | 'description' | 'public_enabled' | 'box_code'>>
+  ): FeedbackBox | undefined {
+    const box = this.data.feedback_boxes.find((b) => b.id === id && b.organization_id === orgId);
+    if (!box) return undefined;
+    if (updates.title !== undefined) box.title = updates.title.trim();
+    if (updates.description !== undefined) box.description = updates.description.trim();
+    if (updates.public_enabled !== undefined) box.public_enabled = updates.public_enabled;
+    if (updates.box_code !== undefined) {
+      const code = updates.box_code.trim().toUpperCase();
+      const duplicate = this.data.feedback_boxes.find(
+        (b) => b.box_code.toUpperCase() === code && b.id !== id
+      );
+      if (duplicate) {
+        throw new Error(`Box code "${code}" is already in use.`);
+      }
+      box.box_code = code;
+    }
+    box.updated_at = new Date().toISOString();
+    this.saveData();
+    return box;
+  }
+
+  public deleteFeedbackBox(id: string, orgId: string): boolean {
+    const initialLen = this.data.feedback_boxes.length;
+    this.data.feedback_boxes = this.data.feedback_boxes.filter(
+      (b) => !(b.id === id && b.organization_id === orgId)
+    );
+    if (this.data.feedback_boxes.length !== initialLen) {
+      this.saveData();
+      return true;
+    }
+    return false;
+  }
+
+  public deleteSubmission(id: string, orgId: string): boolean {
+    const index = this.data.submissions.findIndex((s) => s.id === id && s.organization_id === orgId);
+    if (index === -1) return false;
+    this.data.submissions.splice(index, 1);
+    this.data.feedback_notes = this.data.feedback_notes.filter((n) => n.submission_id !== id);
+    this.data.submission_group_members = this.data.submission_group_members.filter((m) => m.submission_id !== id);
+    this.saveData();
+    return true;
+  }
+
+  public listOperators(orgId: string) {
+    return this.data.operators
+      .filter((op) => op.organization_id === orgId)
+      .map(({ password_hash, password_salt, ...safe }) => safe);
+  }
+
+  public createOperator(payload: {
+    organization_id: string;
+    username: string;
+    password: string;
+    role: 'admin' | 'operator';
+  }) {
+    const existing = this.getOperatorByUsername(payload.username);
+    if (existing) {
+      throw new Error(`Username "${payload.username}" is already taken.`);
+    }
+    const now = new Date().toISOString();
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = hashPassword(payload.password, salt);
+    const newOp = {
+      id: `op-${Date.now()}`,
+      organization_id: payload.organization_id,
+      username: payload.username.trim().toLowerCase(),
+      password_hash: hash,
+      password_salt: salt,
+      role: payload.role || 'operator',
+      status: 'active' as const,
+      created_at: now,
+      last_login_at: undefined,
+    };
+    this.data.operators.push(newOp);
+    this.saveData();
+    const { password_hash, password_salt, ...safe } = newOp;
+    return safe;
+  }
+
+  public updateOperator(
+    id: string,
+    orgId: string,
+    updates: {
+      role?: 'admin' | 'operator';
+      status?: 'active' | 'inactive';
+      password?: string;
+    }
+  ) {
+    const op = this.data.operators.find((o) => o.id === id && o.organization_id === orgId);
+    if (!op) return undefined;
+    if (updates.role) op.role = updates.role;
+    if (updates.status) op.status = updates.status;
+    if (updates.password && updates.password.trim()) {
+      op.password_salt = crypto.randomBytes(16).toString('hex');
+      op.password_hash = hashPassword(updates.password.trim(), op.password_salt);
+    }
+    this.saveData();
+    const { password_hash, password_salt, ...safe } = op;
+    return safe;
+  }
+
+  public deleteOperator(id: string, orgId: string): boolean {
+    const index = this.data.operators.findIndex((o) => o.id === id && o.organization_id === orgId);
+    if (index === -1) return false;
+    this.data.operators.splice(index, 1);
+    this.saveData();
+    return true;
+  }
+
+  public updateOrganization(
+    id: string,
+    updates: Partial<Pick<Organization, 'name' | 'code' | 'contact_email' | 'welcome_message' | 'thank_you_message'>>
+  ): Organization | undefined {
+    const org = this.data.organizations.find((o) => o.id === id);
+    if (!org) return undefined;
+    if (updates.name !== undefined) org.name = updates.name.trim();
+    if (updates.code !== undefined) org.code = updates.code.trim().toUpperCase();
+    if (updates.contact_email !== undefined) org.contact_email = updates.contact_email.trim();
+    if (updates.welcome_message !== undefined) org.welcome_message = updates.welcome_message.trim();
+    if (updates.thank_you_message !== undefined) org.thank_you_message = updates.thank_you_message.trim();
+    org.updated_at = new Date().toISOString();
+    this.saveData();
+    return org;
   }
 
   public getOperatorByUsername(username: string) {

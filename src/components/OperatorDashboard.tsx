@@ -5,29 +5,39 @@ import {
   ArrowUpDown,
   Building2,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
+  Download,
   ExternalLink,
   Eye,
   Filter,
   FolderPlus,
+  Key,
   Layers,
   Lightbulb,
+  Lock,
   LogOut,
   Mail,
   MessageSquare,
+  Pencil,
   Plus,
   Printer,
   QrCode,
   RefreshCw,
   Search,
   Send,
+  Settings,
   Shield,
+  ShieldCheck,
   Smartphone,
   Sparkles,
   Tag,
   Trash2,
   User,
+  UserCheck,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -66,7 +76,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
 }) => {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<
-    'all' | 'suggestions' | 'complaints' | 'groups' | 'analytics' | 'qrcodes' | 'reports'
+    'all' | 'suggestions' | 'complaints' | 'groups' | 'analytics' | 'qrcodes' | 'reports' | 'users' | 'settings'
   >('all');
 
   // Submissions State
@@ -87,6 +97,59 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
   const [groups, setGroups] = useState<FeedbackGroup[]>([]);
   const [stats, setStats] = useState<StatisticsData | null>(null);
   const [reports, setReports] = useState<DailyReport[]>([]);
+
+  // Organization state & settings
+  const [currentOrg, setCurrentOrg] = useState<Organization>(organization);
+  const [orgForm, setOrgForm] = useState({
+    name: organization.name || '',
+    code: organization.code || '',
+    contact_email: organization.contact_email || '',
+    welcome_message: organization.welcome_message || '',
+    thank_you_message: organization.thank_you_message || '',
+  });
+  const [savingOrg, setSavingOrg] = useState<boolean>(false);
+  const [orgSaveNotice, setOrgSaveNotice] = useState<string | null>(null);
+  const [orgSaveError, setOrgSaveError] = useState<string | null>(null);
+
+  // Box Management (Create / Edit / Delete)
+  const [showBoxModal, setShowBoxModal] = useState<boolean>(false);
+  const [boxModalMode, setBoxModalMode] = useState<'create' | 'edit'>('create');
+  const [editingBoxId, setEditingBoxId] = useState<string | null>(null);
+  const [boxForm, setBoxForm] = useState({
+    title: '',
+    box_code: '',
+    description: '',
+    public_enabled: true,
+  });
+  const [boxActionLoading, setBoxActionLoading] = useState<boolean>(false);
+  const [boxActionError, setBoxActionError] = useState<string | null>(null);
+  const [boxActionNotice, setBoxActionNotice] = useState<string | null>(null);
+  const [deleteBoxConfirmId, setDeleteBoxConfirmId] = useState<string | null>(null);
+
+  // User Management (Add / Edit / Remove)
+  const [users, setUsers] = useState<Operator[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState<boolean>(false);
+  const [showUserModal, setShowUserModal] = useState<boolean>(false);
+  const [userModalMode, setUserModalMode] = useState<'create' | 'edit'>('create');
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [userForm, setUserForm] = useState({
+    username: '',
+    password: '',
+    role: 'operator' as 'admin' | 'operator',
+    status: 'active' as 'active' | 'inactive',
+  });
+  const [userActionLoading, setUserActionLoading] = useState<boolean>(false);
+  const [userActionError, setUserActionError] = useState<string | null>(null);
+  const [userActionNotice, setUserActionNotice] = useState<string | null>(null);
+  const [deleteUserConfirmId, setDeleteUserConfirmId] = useState<string | null>(null);
+
+  const savingBox = boxActionLoading;
+  const savingUser = userActionLoading;
+
+  // Feedback Deletion
+  const [deleteSubConfirmId, setDeleteSubConfirmId] = useState<string | null>(null);
+  const [deletingSub, setDeletingSub] = useState<boolean>(false);
+  const [subActionNotice, setSubActionNotice] = useState<string | null>(null);
 
   // Selected Submission Modal
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
@@ -184,13 +247,57 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
   // Load Boxes
   const fetchBoxes = async () => {
     try {
-      const res = await fetch('/api/public/boxes');
+      const res = await fetch('/api/operator/boxes', { headers: authHeaders });
       if (res.ok) {
         const data = await res.json();
         setBoxes(data.boxes || []);
+      } else {
+        const fallback = await fetch('/api/public/boxes');
+        if (fallback.ok) {
+          const data = await fallback.json();
+          setBoxes(data.boxes || []);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch boxes', err);
+    }
+  };
+
+  // Load Users
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch('/api/operator/users', { headers: authHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data.users || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users', err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  // Load Organization
+  const fetchOrganization = async () => {
+    try {
+      const res = await fetch('/api/operator/organization', { headers: authHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.organization) {
+          setCurrentOrg(data.organization);
+          setOrgForm({
+            name: data.organization.name || '',
+            code: data.organization.code || '',
+            contact_email: data.organization.contact_email || '',
+            welcome_message: data.organization.welcome_message || '',
+            thank_you_message: data.organization.thank_you_message || '',
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch organization', err);
     }
   };
 
@@ -216,7 +323,301 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
     fetchGroups();
     fetchStats();
     fetchReports();
+    fetchOrganization();
+    if (operator.role === 'admin') {
+      fetchUsers();
+    }
   }, []);
+
+  // Fetch when tab changes
+  useEffect(() => {
+    if (activeTab === 'users') {
+      fetchUsers();
+    } else if (activeTab === 'settings') {
+      fetchOrganization();
+    }
+  }, [activeTab]);
+
+  // Box CRUD Handlers
+  const openCreateBoxModal = () => {
+    setBoxForm({
+      title: '',
+      box_code: `${currentOrg.code || 'CTP'}-`,
+      description: '',
+      public_enabled: true,
+    });
+    setEditingBoxId(null);
+    setBoxModalMode('create');
+    setBoxActionError(null);
+    setShowBoxModal(true);
+  };
+
+  const openEditBoxModal = (box: FeedbackBox) => {
+    setBoxForm({
+      title: box.title || '',
+      box_code: box.box_code || '',
+      description: box.description || '',
+      public_enabled: box.public_enabled !== false,
+    });
+    setEditingBoxId(box.id);
+    setBoxModalMode('edit');
+    setBoxActionError(null);
+    setShowBoxModal(true);
+  };
+
+  const handleSaveBox = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBoxActionError(null);
+    if (!boxForm.title.trim()) {
+      setBoxActionError('Box title is required.');
+      return;
+    }
+    if (!boxForm.box_code.trim()) {
+      setBoxActionError('Box code is required.');
+      return;
+    }
+
+    setBoxActionLoading(true);
+    try {
+      const url =
+        boxModalMode === 'create'
+          ? '/api/operator/boxes'
+          : `/api/operator/boxes/${editingBoxId}`;
+      const method = boxModalMode === 'create' ? 'POST' : 'PATCH';
+
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders,
+        body: JSON.stringify({
+          title: boxForm.title.trim(),
+          box_code: boxForm.box_code.trim().toUpperCase(),
+          description: boxForm.description.trim(),
+          public_enabled: boxForm.public_enabled,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save feedback box.');
+      }
+
+      setShowBoxModal(false);
+      setBoxActionNotice(
+        boxModalMode === 'create'
+          ? 'Feedback box created successfully!'
+          : 'Feedback box updated successfully!'
+      );
+      setTimeout(() => setBoxActionNotice(null), 4000);
+      await fetchBoxes();
+      await fetchStats();
+    } catch (err: any) {
+      setBoxActionError(err.message || 'Failed to save feedback box.');
+    } finally {
+      setBoxActionLoading(false);
+    }
+  };
+
+  const handleDeleteBox = async (boxId: string) => {
+    setBoxActionLoading(true);
+    try {
+      const res = await fetch(`/api/operator/boxes/${boxId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete box.');
+      }
+      setDeleteBoxConfirmId(null);
+      setBoxActionNotice('Feedback box deleted successfully.');
+      setTimeout(() => setBoxActionNotice(null), 4000);
+      await fetchBoxes();
+      await fetchStats();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete box');
+    } finally {
+      setBoxActionLoading(false);
+    }
+  };
+
+  // User CRUD Handlers
+  const openCreateUserModal = () => {
+    setUserForm({
+      username: '',
+      password: '',
+      role: 'operator',
+      status: 'active',
+    });
+    setEditingUserId(null);
+    setUserModalMode('create');
+    setUserActionError(null);
+    setShowUserModal(true);
+  };
+
+  const openEditUserModal = (u: Operator) => {
+    setUserForm({
+      username: u.username,
+      password: '',
+      role: u.role,
+      status: u.status,
+    });
+    setEditingUserId(u.id);
+    setUserModalMode('edit');
+    setUserActionError(null);
+    setShowUserModal(true);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserActionError(null);
+    if (!userForm.username.trim()) {
+      setUserActionError('Username is required.');
+      return;
+    }
+    if (userModalMode === 'create' && !userForm.password) {
+      setUserActionError('Password is required for new users.');
+      return;
+    }
+
+    setUserActionLoading(true);
+    try {
+      const url =
+        userModalMode === 'create'
+          ? '/api/operator/users'
+          : `/api/operator/users/${editingUserId}`;
+      const method = userModalMode === 'create' ? 'POST' : 'PATCH';
+
+      const payload: any = {
+        role: userForm.role,
+        status: userForm.status,
+      };
+      if (userModalMode === 'create') {
+        payload.username = userForm.username.trim();
+        payload.password = userForm.password;
+      } else {
+        if (userForm.password.trim()) {
+          payload.password = userForm.password.trim();
+        }
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders,
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save user.');
+      }
+
+      setShowUserModal(false);
+      setUserActionNotice(
+        userModalMode === 'create' ? 'User created successfully!' : 'User updated successfully!'
+      );
+      setTimeout(() => setUserActionNotice(null), 4000);
+      await fetchUsers();
+    } catch (err: any) {
+      setUserActionError(err.message || 'Failed to save user.');
+    } finally {
+      setUserActionLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    setUserActionLoading(true);
+    try {
+      const res = await fetch(`/api/operator/users/${userId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete user.');
+      }
+      setDeleteUserConfirmId(null);
+      setUserActionNotice('User removed successfully.');
+      setTimeout(() => setUserActionNotice(null), 4000);
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete user');
+    } finally {
+      setUserActionLoading(false);
+    }
+  };
+
+  // Organization Settings Save Handler
+  const handleSaveOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOrgSaveError(null);
+    setOrgSaveNotice(null);
+
+    if (!orgForm.name.trim()) {
+      setOrgSaveError('Company Name is required.');
+      return;
+    }
+    if (!orgForm.code.trim()) {
+      setOrgSaveError('Company Code is required.');
+      return;
+    }
+
+    setSavingOrg(true);
+    try {
+      const res = await fetch('/api/operator/organization', {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          name: orgForm.name.trim(),
+          code: orgForm.code.trim().toUpperCase(),
+          contact_email: orgForm.contact_email.trim(),
+          welcome_message: orgForm.welcome_message.trim(),
+          thank_you_message: orgForm.thank_you_message.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update organization details.');
+      }
+
+      setCurrentOrg(data.organization);
+      setOrgSaveNotice('Company details and messages saved successfully!');
+      setTimeout(() => setOrgSaveNotice(null), 4000);
+    } catch (err: any) {
+      setOrgSaveError(err.message || 'Failed to update organization settings.');
+    } finally {
+      setSavingOrg(false);
+    }
+  };
+
+  // Feedback Deletion Handler
+  const handleDeleteSubmission = async (subId: string) => {
+    setDeletingSub(true);
+    try {
+      const res = await fetch(`/api/operator/submissions/${subId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete submission.');
+      }
+
+      if (selectedSubmission?.id === subId) {
+        setSelectedSubmission(null);
+      }
+      setDeleteSubConfirmId(null);
+      setSubmissions((prev) => prev.filter((s) => s.id !== subId));
+      setTotalSubmissions((prev) => Math.max(0, prev - 1));
+      setSubActionNotice(`Feedback #${subId} deleted successfully.`);
+      setTimeout(() => setSubActionNotice(null), 4000);
+      await fetchStats();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete submission.');
+    } finally {
+      setDeletingSub(false);
+    }
+  };
 
   // Refresh submissions when filters change
   useEffect(() => {
@@ -475,7 +876,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-medium">
-                {organization.name} ({organization.code})
+                {currentOrg.name} ({currentOrg.code})
               </p>
             </div>
           </div>
@@ -667,7 +1068,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 }`}
               >
                 <QrCode className="w-3.5 h-3.5" />
-                <span>QR Boxes & Print</span>
+                <span>Boxes & QR Codes</span>
               </button>
 
               <button
@@ -681,6 +1082,32 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
               >
                 <Mail className="w-3.5 h-3.5" />
                 <span>Daily Email Reports</span>
+              </button>
+
+              <button
+                id="tab-users"
+                onClick={() => setActiveTab('users')}
+                className={`py-2 px-3 text-xs sm:text-sm font-semibold whitespace-nowrap border-b-2 transition flex items-center gap-1.5 ${
+                  activeTab === 'users'
+                    ? 'border-purple-600 text-purple-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>User Control</span>
+              </button>
+
+              <button
+                id="tab-settings"
+                onClick={() => setActiveTab('settings')}
+                className={`py-2 px-3 text-xs sm:text-sm font-semibold whitespace-nowrap border-b-2 transition flex items-center gap-1.5 ${
+                  activeTab === 'settings'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Company Details</span>
               </button>
             </nav>
 
@@ -939,6 +1366,15 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                           title="Open details"
                         >
                           <Eye className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          id={`btn-delete-sub-${sub.id}`}
+                          onClick={() => setDeleteSubConfirmId(sub.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                          title="Delete submission"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
@@ -1230,93 +1666,513 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
         {/* TAB: QR Codes & Print Signs (Spec #15, #16) */}
         {activeTab === 'qrcodes' && (
           <div className="space-y-6">
-            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
                   Permanent Public QR Codes & Digital Feedback Boxes
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Print these placards to attach directly onto physical suggestion boxes or dining tables.
+                <p className="text-xs text-slate-500 mt-1">
+                  Create dedicated feedback boxes for each zone, download QR codes, and print official placards.
                 </p>
               </div>
-              <button
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Placards</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  id="btn-create-feedback-box"
+                  onClick={openCreateBoxModal}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Feedback Box</span>
+                </button>
+                <button
+                  id="btn-print-placards"
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Placards</span>
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {boxes.map((box) => {
-                const qrUrl = qrCodeDataUrls[box.box_code];
-                const publicUrl =
-                  typeof window !== 'undefined'
-                    ? `${window.location.origin}/s/${box.box_code}`
-                    : `/s/${box.box_code}`;
+            {boxActionNotice && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-medium text-emerald-800 flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{boxActionNotice}</span>
+              </div>
+            )}
 
-                return (
-                  <div
-                    key={box.box_code}
-                    id={`qr-card-${box.box_code}`}
-                    className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col items-center text-center justify-between relative overflow-hidden"
-                  >
-                    {/* Header bar on card */}
-                    <div className="w-full pb-3 mb-2 border-b border-slate-100">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-sky-600 block">
-                        CloudBase Digital Feedback Box
-                      </span>
-                      <h4 className="text-base font-extrabold text-slate-900 mt-0.5">
-                        {box.title}
-                      </h4>
-                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">
-                        {box.description}
+            {boxes.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+                <QrCode className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <h4 className="text-sm font-bold text-slate-800">No Feedback Boxes Found</h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  Create your first permanent feedback box (e.g. Canteen, Production Floor, Reception) to generate unique QR codes.
+                </p>
+                <button
+                  onClick={openCreateBoxModal}
+                  className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 text-white text-xs font-semibold"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create First Box</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {boxes.map((box) => {
+                  const qrUrl = qrCodeDataUrls[box.box_code];
+                  const publicUrl =
+                    typeof window !== 'undefined'
+                      ? `${window.location.origin}/s/${box.box_code}`
+                      : `/s/${box.box_code}`;
+
+                  return (
+                    <div
+                      key={box.box_code}
+                      id={`qr-card-${box.box_code}`}
+                      className="bg-white border-2 border-slate-200 hover:border-slate-300 transition-colors rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden"
+                    >
+                      {/* Top Bar on Card: Status & Actions */}
+                      <div className="w-full pb-3 mb-2 border-b border-slate-100 flex items-center justify-between">
+                        <div>
+                          {box.public_enabled !== false ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                              Active Online
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                              <Lock className="w-2.5 h-2.5" />
+                              Disabled
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            id={`btn-edit-box-${box.id}`}
+                            onClick={() => openEditBoxModal(box)}
+                            className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition"
+                            title="Edit Feedback Box"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            id={`btn-delete-box-${box.id}`}
+                            onClick={() => setDeleteBoxConfirmId(box.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Delete Feedback Box"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Box Info */}
+                      <div className="text-center">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-sky-600 block">
+                          {currentOrg.name || 'CloudBase Digital Box'}
+                        </span>
+                        <h4 className="text-base font-extrabold text-slate-900 mt-0.5">
+                          {box.title}
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2 min-h-[32px]">
+                          {box.description || 'Public feedback and suggestion box.'}
+                        </p>
+                      </div>
+
+                      {/* QR Code image */}
+                      <div className="my-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 shadow-inner flex flex-col items-center justify-center">
+                        {qrUrl ? (
+                          <img
+                            src={qrUrl}
+                            alt={`QR Code for ${box.box_code}`}
+                            className="w-40 h-40 object-contain rounded-lg"
+                          />
+                        ) : (
+                          <div className="w-40 h-40 flex items-center justify-center text-xs text-slate-400">
+                            Generating QR...
+                          </div>
+                        )}
+                        <span className="text-[11px] font-mono text-slate-700 font-semibold bg-white border border-slate-200 mt-2 py-0.5 px-2.5 rounded-full select-all">
+                          {box.box_code}
+                        </span>
+                      </div>
+
+                      {/* Card Footer Actions */}
+                      <div className="w-full space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            id={`btn-copy-url-${box.box_code}`}
+                            onClick={() => {
+                              navigator.clipboard.writeText(publicUrl);
+                              setBoxActionNotice(`Copied link for ${box.title}: ${publicUrl}`);
+                              setTimeout(() => setBoxActionNotice(null), 3000);
+                            }}
+                            className="py-1.5 px-2 text-xs font-semibold rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 transition flex items-center justify-center gap-1"
+                          >
+                            <Copy className="w-3 h-3 text-slate-500" />
+                            <span>Copy URL</span>
+                          </button>
+                          <button
+                            id={`btn-test-view-${box.box_code}`}
+                            onClick={() => onOpenPublicView(box.box_code)}
+                            className="py-1.5 px-2 text-xs font-semibold rounded-xl bg-sky-600 hover:bg-sky-700 text-white transition flex items-center justify-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>Test View</span>
+                          </button>
+                        </div>
+
+                        {qrUrl && (
+                          <a
+                            href={qrUrl}
+                            download={`QR-${box.box_code}.png`}
+                            className="w-full py-1.5 px-2 text-[11px] font-medium rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition flex items-center justify-center gap-1 border border-slate-100"
+                          >
+                            <Download className="w-3 h-3" />
+                            <span>Download QR PNG</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: User Control (Add / Edit / Remove Operators) */}
+        {activeTab === 'users' && (
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-purple-600" />
+                  <span>Operator & User Access Control</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Manage administrators and operators who can review submissions, categorize groups, and manage settings.
+                </p>
+              </div>
+
+              {operator.role === 'admin' && (
+                <button
+                  id="btn-add-user"
+                  onClick={openCreateUserModal}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Add Operator / User</span>
+                </button>
+              )}
+            </div>
+
+            {userActionNotice && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-medium text-emerald-800 flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{userActionNotice}</span>
+              </div>
+            )}
+
+            {operator.role !== 'admin' ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
+                <Shield className="w-8 h-8 text-amber-600 mx-auto mb-2" />
+                <h4 className="text-sm font-bold text-amber-900">Administrator Privileges Required</h4>
+                <p className="text-xs text-amber-700 mt-1 max-w-md mx-auto">
+                  Only administrators have permission to create, edit, or remove operator accounts.
+                  Your current account ({operator.username}) has the role: <span className="font-bold uppercase">{operator.role}</span>.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+                {loadingUsers ? (
+                  <div className="py-12 text-center text-xs text-slate-400">Loading user list...</div>
+                ) : users.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-slate-400">No users found.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold text-[10px] tracking-wider">
+                        <tr>
+                          <th className="py-3 px-4">User</th>
+                          <th className="py-3 px-4">Role</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4">Created Date</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {users.map((u) => {
+                          const isSelf = u.id === operator.id;
+                          return (
+                            <tr key={u.id} className="hover:bg-slate-50/60 transition-colors">
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 text-xs">
+                                    {u.username.slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                      <span>{u.username}</span>
+                                      {isSelf && (
+                                        <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 px-1.5 py-0.2 rounded border border-sky-200">
+                                          You
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      ID: {u.id}
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td className="py-3.5 px-4">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-semibold text-[11px] ${
+                                    u.role === 'admin'
+                                      ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                      : 'bg-slate-100 text-slate-800 border border-slate-200'
+                                  }`}
+                                >
+                                  {u.role === 'admin' ? (
+                                    <ShieldCheck className="w-3 h-3 text-purple-600" />
+                                  ) : (
+                                    <User className="w-3 h-3 text-slate-500" />
+                                  )}
+                                  <span className="capitalize">{u.role}</span>
+                                </span>
+                              </td>
+
+                              <td className="py-3.5 px-4">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold text-[11px] ${
+                                    u.status === 'active'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      u.status === 'active' ? 'bg-emerald-500' : 'bg-rose-500'
+                                    }`}
+                                  ></span>
+                                  <span className="capitalize">{u.status}</span>
+                                </span>
+                              </td>
+
+                              <td className="py-3.5 px-4 text-slate-500">
+                                {new Date(u.created_at).toLocaleDateString()}
+                              </td>
+
+                              <td className="py-3.5 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    id={`btn-edit-user-${u.id}`}
+                                    onClick={() => openEditUserModal(u)}
+                                    className="p-1.5 text-slate-500 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition"
+                                    title="Edit User"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  <button
+                                    id={`btn-delete-user-${u.id}`}
+                                    onClick={() => setDeleteUserConfirmId(u.id)}
+                                    disabled={isSelf}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title={isSelf ? 'Cannot delete yourself' : 'Remove User'}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: Company Details & Messages Customization */}
+        {activeTab === 'settings' && (
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-sky-600" />
+                <span>Company Details & System Message Customization</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure your company name, short code, and custom messages presented to employees and guests on public QR boxes.
+              </p>
+            </div>
+
+            {orgSaveNotice && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-medium text-emerald-800 flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{orgSaveNotice}</span>
+              </div>
+            )}
+
+            {orgSaveError && (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs font-medium text-rose-800 flex items-center gap-2 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{orgSaveError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Form Section */}
+              <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs">
+                <form onSubmit={handleSaveOrganization} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        Company / Organization Name *
+                      </label>
+                      <input
+                        id="input-company-name"
+                        type="text"
+                        required
+                        value={orgForm.name}
+                        onChange={(e) => setOrgForm({ ...orgForm, name: e.target.value })}
+                        placeholder="e.g. Cantec Printing & Packaging"
+                        className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Displayed in public headers and email summaries.
                       </p>
                     </div>
 
-                    {/* QR Code image */}
-                    <div className="my-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 shadow-inner">
-                      {qrUrl ? (
-                        <img
-                          src={qrUrl}
-                          alt={`QR Code for ${box.box_code}`}
-                          className="w-44 h-44 object-contain rounded-lg"
-                        />
-                      ) : (
-                        <div className="w-44 h-44 flex items-center justify-center text-xs text-slate-400">
-                          Generating QR...
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="w-full">
-                      <div className="text-[11px] font-mono text-slate-500 bg-slate-100 py-1 px-2 rounded-md mb-3 select-all">
-                        {box.box_code}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(publicUrl);
-                            alert(`Copied link to clipboard: ${publicUrl}`);
-                          }}
-                          className="py-2 px-2 text-xs font-semibold rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 transition"
-                        >
-                          Copy URL
-                        </button>
-                        <button
-                          onClick={() => onOpenPublicView(box.box_code)}
-                          className="py-2 px-2 text-xs font-semibold rounded-xl bg-sky-600 hover:bg-sky-700 text-white transition flex items-center justify-center gap-1"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Test View</span>
-                        </button>
-                      </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        Short Code *
+                      </label>
+                      <input
+                        id="input-company-code"
+                        type="text"
+                        required
+                        value={orgForm.code}
+                        onChange={(e) => setOrgForm({ ...orgForm, code: e.target.value })}
+                        placeholder="e.g. CTP"
+                        className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-mono uppercase text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Prefix used for permanent QR codes and reports.
+                      </p>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      Management Notification Email
+                    </label>
+                    <input
+                      id="input-company-email"
+                      type="email"
+                      value={orgForm.contact_email}
+                      onChange={(e) => setOrgForm({ ...orgForm, contact_email: e.target.value })}
+                      placeholder="e.g. management@cantec.lk"
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Target address where daily Cron email summaries and urgent alerts are dispatched.
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100">
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      Public Welcome Message
+                    </label>
+                    <textarea
+                      id="input-welcome-message"
+                      rows={3}
+                      value={orgForm.welcome_message}
+                      onChange={(e) => setOrgForm({ ...orgForm, welcome_message: e.target.value })}
+                      placeholder="Welcome to our Digital Feedback Box. Your voice helps us improve everyday."
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Shown to employees on the public feedback landing screen before they select a category.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">
+                      Public Thank You / Submission Confirmation Message
+                    </label>
+                    <textarea
+                      id="input-thankyou-message"
+                      rows={3}
+                      value={orgForm.thank_you_message}
+                      onChange={(e) => setOrgForm({ ...orgForm, thank_you_message: e.target.value })}
+                      placeholder="Thank you for your valuable feedback! Our management team reviews all submissions promptly."
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Presented to users immediately after their suggestion or complaint is recorded.
+                    </p>
+                  </div>
+
+                  <div className="pt-3">
+                    <button
+                      id="btn-save-company-details"
+                      type="submit"
+                      disabled={savingOrg}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-xs transition disabled:opacity-50 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{savingOrg ? 'Saving Changes...' : 'Save Company Details'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Live Preview Section */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                    Live Preview: Public Welcome Screen
+                  </span>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-5 h-5 rounded-md bg-sky-600 text-white font-black text-[10px] flex items-center justify-center">
+                        {orgForm.code?.slice(0, 2) || 'CB'}
+                      </div>
+                      <span className="text-xs font-extrabold text-slate-900 truncate">
+                        {orgForm.name || 'Company Name'}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-sky-50/60 border border-sky-100 rounded-lg text-xs text-sky-900 leading-relaxed">
+                      {orgForm.welcome_message || 'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                    Live Preview: Public Thank You Screen
+                  </span>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs text-center">
+                    <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-2">
+                      <Check className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-900 block mb-1">
+                      Feedback Submitted Successfully!
+                    </span>
+                    <p className="text-[11px] text-slate-600 leading-relaxed bg-emerald-50/50 p-2.5 rounded-lg border border-emerald-100">
+                      {orgForm.thank_you_message || 'Thank you for your valuable feedback! Our management team reviews all submissions promptly.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1466,13 +2322,25 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 </h3>
               </div>
 
-              <button
-                id="btn-close-detail-modal"
-                onClick={() => setSelectedSubmission(null)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  id="btn-delete-sub-modal"
+                  onClick={() => setDeleteSubConfirmId(selectedSubmission.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 text-xs font-semibold transition"
+                  title="Delete this feedback"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+
+                <button
+                  id="btn-close-detail-modal"
+                  onClick={() => setSelectedSubmission(null)}
+                  className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}
@@ -1728,6 +2596,340 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Create / Edit Feedback Box */}
+      {showBoxModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <QrCode className="w-4 h-4 text-sky-600" />
+                <span>{boxModalMode === 'create' ? 'Create Feedback Box' : 'Edit Feedback Box'}</span>
+              </h3>
+              <button
+                onClick={() => setShowBoxModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBox} className="space-y-4">
+              {boxActionError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-medium text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{boxActionError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Box Title *
+                </label>
+                <input
+                  id="input-box-title"
+                  type="text"
+                  required
+                  value={boxForm.title}
+                  onChange={(e) => setBoxForm({ ...boxForm, title: e.target.value })}
+                  placeholder="e.g. Canteen Cafeteria Feedback"
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Box Identifier Code *
+                </label>
+                <input
+                  id="input-box-code"
+                  type="text"
+                  required
+                  value={boxForm.box_code}
+                  onChange={(e) =>
+                    setBoxForm({
+                      ...boxForm,
+                      box_code: e.target.value.toUpperCase().replace(/[^A-Z0-9\-_]/g, ''),
+                    })
+                  }
+                  placeholder="e.g. CTP-CANTEEN"
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-mono uppercase text-slate-900 focus:border-sky-500 outline-hidden"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Unique URL slug and QR payload (e.g. /s/CTP-CANTEEN).
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Description / Placard Subtitle
+                </label>
+                <textarea
+                  id="input-box-desc"
+                  rows={3}
+                  value={boxForm.description}
+                  onChange={(e) => setBoxForm({ ...boxForm, description: e.target.value })}
+                  placeholder="Feedback for canteen cafeteria, food quality, hygiene, and dining environment..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 outline-hidden"
+                />
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 block">Public Availability</span>
+                  <p className="text-[10px] text-slate-500">
+                    When enabled, anyone scanning this QR code can submit feedback.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={boxForm.public_enabled}
+                    onChange={(e) => setBoxForm({ ...boxForm, public_enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBoxModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-save-box-submit"
+                  type="submit"
+                  disabled={savingBox || !boxForm.title.trim() || !boxForm.box_code.trim()}
+                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                >
+                  {savingBox ? 'Saving...' : boxModalMode === 'create' ? 'Create Box' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Delete Box Confirmation */}
+      {deleteBoxConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 text-center">Delete Feedback Box?</h3>
+            <p className="text-xs text-slate-500 text-center mt-1">
+              Are you sure you want to delete this permanent QR feedback box? Submissions already recorded in this box will be preserved in the archive.
+            </p>
+            <div className="flex justify-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setDeleteBoxConfirmId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-delete-box"
+                type="button"
+                onClick={() => handleDeleteBox(deleteBoxConfirmId)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition"
+              >
+                Delete Box
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Create / Edit User */}
+      {showUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-purple-600" />
+                <span>{userModalMode === 'create' ? 'Add Operator / User' : 'Edit User'}</span>
+              </h3>
+              <button
+                onClick={() => setShowUserModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUser} className="space-y-4">
+              {userActionError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-medium text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{userActionError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Username *
+                </label>
+                <input
+                  id="input-user-username"
+                  type="text"
+                  required
+                  value={userForm.username}
+                  onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                  placeholder="e.g. ops_manager"
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-purple-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {userModalMode === 'create' ? 'Password *' : 'New Password (Optional)'}
+                </label>
+                <input
+                  id="input-user-password"
+                  type="password"
+                  required={userModalMode === 'create'}
+                  value={userForm.password}
+                  onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                  placeholder={
+                    userModalMode === 'create'
+                      ? 'Enter login password...'
+                      : 'Leave blank to keep existing password'
+                  }
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-purple-500 outline-hidden"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    System Role
+                  </label>
+                  <select
+                    id="select-user-role"
+                    value={userForm.role}
+                    onChange={(e) =>
+                      setUserForm({ ...userForm, role: e.target.value as 'operator' | 'admin' })
+                    }
+                    className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 bg-white"
+                  >
+                    <option value="operator">Operator</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    Account Status
+                  </label>
+                  <select
+                    id="select-user-status"
+                    value={userForm.status}
+                    onChange={(e) =>
+                      setUserForm({ ...userForm, status: e.target.value as 'active' | 'inactive' })
+                    }
+                    className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 bg-white"
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUserModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-save-user-submit"
+                  type="submit"
+                  disabled={
+                    savingUser ||
+                    !userForm.username.trim() ||
+                    (userModalMode === 'create' && !userForm.password)
+                  }
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                >
+                  {savingUser ? 'Saving...' : userModalMode === 'create' ? 'Add User' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Delete User Confirmation */}
+      {deleteUserConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 text-center">Remove Operator Account?</h3>
+            <p className="text-xs text-slate-500 text-center mt-1">
+              Are you sure you want to remove this operator account? They will immediately lose access to the operator dashboard.
+            </p>
+            <div className="flex justify-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setDeleteUserConfirmId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-delete-user"
+                type="button"
+                onClick={() => handleDeleteUser(deleteUserConfirmId)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition"
+              >
+                Remove User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Delete Submission Confirmation */}
+      {deleteSubConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 text-center">Permanently Delete Feedback?</h3>
+            <p className="text-xs text-slate-500 text-center mt-1">
+              Are you sure you want to delete feedback <span className="font-mono font-bold text-slate-800">{deleteSubConfirmId}</span>? This will permanently remove the submission and any attached internal notes.
+            </p>
+            <div className="flex justify-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setDeleteSubConfirmId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-delete-sub"
+                type="button"
+                onClick={() => handleDeleteSubmission(deleteSubConfirmId)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition"
+              >
+                Delete Feedback
+              </button>
+            </div>
           </div>
         </div>
       )}

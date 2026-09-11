@@ -59,6 +59,9 @@ app.get('/api/public/boxes', (req, res) => {
       id: org.id,
       name: org.name,
       code: org.code,
+      welcome_message: org.welcome_message || '',
+      thank_you_message: org.thank_you_message || '',
+      contact_email: org.contact_email || '',
     },
     boxes: boxes.map((b) => ({
       box_code: b.box_code,
@@ -83,6 +86,9 @@ app.get('/api/public/config', (req, res) => {
     organization: {
       name: org?.name || 'CloudBase',
       code: org?.code || 'CTP',
+      contact_email: org?.contact_email || '',
+      welcome_message: org?.welcome_message || '',
+      thank_you_message: org?.thank_you_message || '',
     },
     feedback_box: {
       box_code: box.box_code,
@@ -127,6 +133,8 @@ app.post('/api/public/submissions', (req, res) => {
     return res.status(404).json({ error: 'Feedback box not found.' });
   }
 
+  const org = db.getOrganization(box.organization_id);
+
   // Create submission record in database
   db.createSubmission({
     organization_id: box.organization_id,
@@ -144,7 +152,7 @@ app.post('/api/public/submissions', (req, res) => {
   return res.json({
     success: true,
     title: 'Thank You!',
-    message: 'Your feedback has been submitted successfully. Your feedback helps us improve.',
+    message: org?.thank_you_message || 'Your feedback has been submitted successfully. Your feedback helps us improve.',
   });
 });
 
@@ -264,6 +272,162 @@ app.patch('/api/operator/submissions/:id', requireOperatorAuth, (req: Authentica
 
   const notes = db.getNotes(req.params.id);
   res.json({ ...updated, notes });
+});
+
+// DELETE /api/operator/submissions/:id
+app.delete('/api/operator/submissions/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const deleted = db.deleteSubmission(req.params.id, orgId);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Submission not found' });
+  }
+  res.json({ success: true, message: 'Submission deleted successfully' });
+});
+
+// GET /api/operator/boxes - All boxes for organization
+app.get('/api/operator/boxes', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const boxes = db.getAllFeedbackBoxes(orgId);
+  res.json({ boxes });
+});
+
+// POST /api/operator/boxes - Create box
+app.post('/api/operator/boxes', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const { title, box_code, description, public_enabled } = req.body || {};
+  if (!title || !box_code) {
+    return res.status(400).json({ error: 'Title and Box Code are required.' });
+  }
+  try {
+    const box = db.createFeedbackBox({
+      organization_id: orgId,
+      box_code,
+      title,
+      description,
+      public_enabled: public_enabled !== false,
+    });
+    res.json({ success: true, box });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to create box' });
+  }
+});
+
+// PATCH /api/operator/boxes/:id - Edit box
+app.patch('/api/operator/boxes/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const { title, box_code, description, public_enabled } = req.body || {};
+  try {
+    const updated = db.updateFeedbackBox(req.params.id, orgId, {
+      title,
+      box_code,
+      description,
+      public_enabled,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'Feedback box not found' });
+    }
+    res.json({ success: true, box: updated });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to update box' });
+  }
+});
+
+// DELETE /api/operator/boxes/:id - Delete box
+app.delete('/api/operator/boxes/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const deleted = db.deleteFeedbackBox(req.params.id, orgId);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Feedback box not found' });
+  }
+  res.json({ success: true, message: 'Feedback box deleted successfully' });
+});
+
+// GET /api/operator/users - List operators (Admin & Operator)
+app.get('/api/operator/users', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const users = db.listOperators(orgId);
+  res.json({ users });
+});
+
+// POST /api/operator/users - Create operator (Admin only)
+app.post('/api/operator/users', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  if (req.operator!.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin privileges required to create users.' });
+  }
+  const orgId = req.operator!.organization_id;
+  const { username, password, role } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+  try {
+    const user = db.createOperator({
+      organization_id: orgId,
+      username,
+      password,
+      role: role === 'admin' ? 'admin' : 'operator',
+    });
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to create user' });
+  }
+});
+
+// PATCH /api/operator/users/:id - Edit operator (Admin only)
+app.patch('/api/operator/users/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  if (req.operator!.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin privileges required to edit users.' });
+  }
+  const orgId = req.operator!.organization_id;
+  const { role, status, password } = req.body || {};
+  const updated = db.updateOperator(req.params.id, orgId, { role, status, password });
+  if (!updated) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json({ success: true, user: updated });
+});
+
+// DELETE /api/operator/users/:id - Delete operator (Admin only)
+app.delete('/api/operator/users/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  if (req.operator!.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin privileges required to remove users.' });
+  }
+  if (req.params.id === req.operator!.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account while logged in.' });
+  }
+  const orgId = req.operator!.organization_id;
+  const deleted = db.deleteOperator(req.params.id, orgId);
+  if (!deleted) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json({ success: true, message: 'User removed successfully' });
+});
+
+// GET /api/operator/organization - Get organization details
+app.get('/api/operator/organization', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const org = db.getOrganization(req.operator!.organization_id);
+  if (!org) {
+    return res.status(404).json({ error: 'Organization not found' });
+  }
+  res.json({ organization: org });
+});
+
+// PATCH /api/operator/organization - Update organization details (Admin only)
+app.patch('/api/operator/organization', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  if (req.operator!.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin privileges required to modify organization settings.' });
+  }
+  const { name, code, contact_email, welcome_message, thank_you_message } = req.body || {};
+  const updated = db.updateOrganization(req.operator!.organization_id, {
+    name,
+    code,
+    contact_email,
+    welcome_message,
+    thank_you_message,
+  });
+  if (!updated) {
+    return res.status(404).json({ error: 'Organization not found' });
+  }
+  res.json({ success: true, organization: updated });
 });
 
 // POST /api/operator/submissions/:id/notes

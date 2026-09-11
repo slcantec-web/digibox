@@ -29,6 +29,9 @@ export interface Organization {
   name: string;
   code: string;
   status: 'active' | 'inactive';
+  contact_email?: string;
+  welcome_message?: string;
+  thank_you_message?: string;
   created_at: string;
   updated_at: string;
 }
