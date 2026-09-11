@@ -92,7 +92,23 @@ export default {
       try {
         // Health check
         if (path === '/api/health') {
-          return json({ status: 'ok', runtime: 'cloudflare-worker', time: new Date().toISOString() });
+          return json({
+            status: 'ok',
+            runtime: 'cloudflare-worker',
+            hasDB: Boolean(env.DB),
+            time: new Date().toISOString(),
+          });
+        }
+
+        // Validate D1 Database binding
+        if (!env.DB) {
+          return json(
+            {
+              error:
+                'Cloudflare D1 Database binding "DB" is missing. Please go to your Cloudflare Pages Dashboard -> Settings -> Functions -> D1 Database Bindings, and add variable name "DB" bound to your "cloudbase-feedback-db".',
+            },
+            500
+          );
         }
 
         // Public: Get feedback boxes
@@ -176,16 +192,37 @@ export default {
 
         // Operator: Login
         if (path === '/api/operator/login' && request.method === 'POST') {
-          const { username, password } = (await request.json()) as any;
+          let body: any = {};
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Invalid JSON request payload.' }, 400);
+          }
+
+          const { username, password } = body;
           if (!username || !password) {
             return json({ error: 'Username and password required.' }, 400);
           }
 
-          const op = await env.DB.prepare(
-            `SELECT * FROM operators WHERE username = ? AND status = 'active'`
-          )
-            .bind(username.trim())
-            .first();
+          let op: any = null;
+          try {
+            op = await env.DB.prepare(
+              `SELECT * FROM operators WHERE username = ? AND status = 'active'`
+            )
+              .bind(username.trim())
+              .first();
+          } catch (dbErr: any) {
+            if (String(dbErr?.message).includes('no such table')) {
+              return json(
+                {
+                  error:
+                    'Database tables not initialized. Please run the SQL migration from migrations/d1_clean_statements.sql in your Cloudflare D1 Console.',
+                },
+                500
+              );
+            }
+            throw dbErr;
+          }
 
           if (!op) {
             return json({ error: 'Invalid username or password.' }, 401);
@@ -578,14 +615,18 @@ export default {
     }
 
     // --- STATIC ASSETS / SPA FALLBACK ---
-    // Pass everything else to Cloudflare ASSETS binding
-    let response = await env.ASSETS.fetch(request);
-    if (response.status === 404) {
-      // SPA Fallback: serve index.html for client-side routing (/s/CTP-CANTEEN, /operator, etc.)
-      const indexReq = new Request(new URL('/index.html', request.url), request);
-      response = await env.ASSETS.fetch(indexReq);
+    // Pass everything else to Cloudflare ASSETS binding (in Worker mode)
+    if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
+      let response = await env.ASSETS.fetch(request);
+      if (response.status === 404) {
+        // SPA Fallback: serve index.html for client-side routing (/s/CTP-CANTEEN, /operator, etc.)
+        const indexReq = new Request(new URL('/index.html', request.url), request);
+        response = await env.ASSETS.fetch(indexReq);
+      }
+      return response;
     }
-    return response;
+
+    return new Response('Not found', { status: 404 });
   },
 
   // 2. Scheduled Cron Trigger (6:00 PM daily summary email)

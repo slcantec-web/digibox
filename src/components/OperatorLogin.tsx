@@ -28,9 +28,23 @@ export const OperatorLogin: React.FC<OperatorLoginProps> = ({
         body: JSON.stringify({ username, password }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        if (res.status === 404) {
+          throw new Error('API route /api/operator/login not found (404). Ensure Cloudflare Pages Functions are deployed.');
+        }
+        throw new Error(`Server returned status ${res.status}: ${res.statusText || 'Non-JSON response'}`);
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
+        throw new Error(data.error || `Authentication failed (Status ${res.status})`);
+      }
+
+      if (!data.token) {
+        throw new Error('Server did not return a session token.');
       }
 
       // Store token in localStorage for persistence

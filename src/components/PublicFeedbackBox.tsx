@@ -116,7 +116,14 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
         }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Server returned unexpected response (${response.status})`);
+      }
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to submit feedback. Please try again.');
       }
