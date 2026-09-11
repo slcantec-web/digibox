@@ -134,6 +134,7 @@ export interface DailyReport {
     total_complaints: number;
     complaints_status_counts: Record<string, number>;
     recent_complaints: string[];
+    recipient_email?: string;
   };
 }
 

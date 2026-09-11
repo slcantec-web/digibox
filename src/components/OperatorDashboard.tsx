@@ -15,6 +15,7 @@ import {
   Filter,
   FolderPlus,
   Key,
+  KeyRound,
   Layers,
   Lightbulb,
   Lock,
@@ -174,6 +175,28 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
 
   // Reset seed notice
   const [seedNotice, setSeedNotice] = useState<string | null>(null);
+
+  // Change My Password Modal
+  const [showChangePassModal, setShowChangePassModal] = useState<boolean>(false);
+  const [currentPassInput, setCurrentPassInput] = useState<string>('');
+  const [newPassInput, setNewPassInput] = useState<string>('');
+  const [confirmPassInput, setConfirmPassInput] = useState<string>('');
+  const [changePassLoading, setChangePassLoading] = useState<boolean>(false);
+  const [changePassError, setChangePassError] = useState<string | null>(null);
+  const [changePassSuccess, setChangePassSuccess] = useState<string | null>(null);
+
+  // Reset User Password Modal (Admin resetting another user's password)
+  const [resetUserModalUser, setResetUserModalUser] = useState<Operator | null>(null);
+  const [resetUserNewPass, setResetUserNewPass] = useState<string>('');
+  const [resetUserLoading, setResetUserLoading] = useState<boolean>(false);
+  const [resetUserError, setResetUserError] = useState<string | null>(null);
+  const [resetUserSuccess, setResetUserSuccess] = useState<string | null>(null);
+
+  // Automated Email in Daily Reports Tab
+  const [automatedEmailInput, setAutomatedEmailInput] = useState<string>(organization.contact_email || '');
+  const [savingAutomatedEmail, setSavingAutomatedEmail] = useState<boolean>(false);
+  const [automatedEmailNotice, setAutomatedEmailNotice] = useState<string | null>(null);
+  const [automatedEmailError, setAutomatedEmailError] = useState<string | null>(null);
 
   // Common Headers
   const authHeaders = useMemo(
@@ -546,6 +569,133 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
     }
   };
 
+  // Change currently authenticated operator's password
+  const handleChangeMyPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePassError(null);
+    setChangePassSuccess(null);
+
+    if (!currentPassInput) {
+      setChangePassError('Please enter your current password.');
+      return;
+    }
+    if (!newPassInput || newPassInput.length < 4) {
+      setChangePassError('New password must be at least 4 characters.');
+      return;
+    }
+    if (newPassInput !== confirmPassInput) {
+      setChangePassError('New passwords do not match.');
+      return;
+    }
+
+    setChangePassLoading(true);
+    try {
+      const res = await fetch('/api/operator/change-my-password', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          currentPassword: currentPassInput,
+          newPassword: newPassInput,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to change password.');
+      }
+
+      setChangePassSuccess('Your password has been changed successfully!');
+      setCurrentPassInput('');
+      setNewPassInput('');
+      setConfirmPassInput('');
+      setTimeout(() => {
+        setShowChangePassModal(false);
+        setChangePassSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      setChangePassError(err.message || 'Failed to change password.');
+    } finally {
+      setChangePassLoading(false);
+    }
+  };
+
+  // Admin resetting another user's password
+  const handleResetUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetUserModalUser) return;
+    setResetUserError(null);
+    setResetUserSuccess(null);
+
+    if (!resetUserNewPass || resetUserNewPass.length < 4) {
+      setResetUserError('New password must be at least 4 characters.');
+      return;
+    }
+
+    setResetUserLoading(true);
+    try {
+      const res = await fetch(`/api/operator/users/${resetUserModalUser.id}`, {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          password: resetUserNewPass,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to reset password.');
+      }
+
+      setResetUserSuccess(`Password for ${resetUserModalUser.username} updated successfully!`);
+      setTimeout(() => {
+        setResetUserModalUser(null);
+        setResetUserNewPass('');
+        setResetUserSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      setResetUserError(err.message || 'Failed to reset password.');
+    } finally {
+      setResetUserLoading(false);
+    }
+  };
+
+  // Automated Daily Report Email Update
+  const handleSaveAutomatedEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAutomatedEmailError(null);
+    setAutomatedEmailNotice(null);
+
+    if (!automatedEmailInput.trim()) {
+      setAutomatedEmailError('Please enter a valid email address.');
+      return;
+    }
+
+    setSavingAutomatedEmail(true);
+    try {
+      const res = await fetch('/api/operator/automated-email', {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          email: automatedEmailInput.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update automated email.');
+      }
+
+      setCurrentOrg((prev) => ({ ...prev, contact_email: data.contact_email }));
+      setOrgForm((prev) => ({ ...prev, contact_email: data.contact_email }));
+      setAutomatedEmailNotice('Automated email updated successfully! Future daily reports will be sent here.');
+      setTimeout(() => setAutomatedEmailNotice(null), 4000);
+    } catch (err: any) {
+      setAutomatedEmailError(err.message || 'Failed to update automated email.');
+    } finally {
+      setSavingAutomatedEmail(false);
+    }
+  };
+
   // Organization Settings Save Handler
   const handleSaveOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -898,6 +1048,23 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
               <User className="w-3.5 h-3.5 text-slate-400" />
               <span>{operator.username}</span>
             </div>
+
+            <button
+              id="btn-header-change-password"
+              onClick={() => {
+                setChangePassError(null);
+                setChangePassSuccess(null);
+                setCurrentPassInput('');
+                setNewPassInput('');
+                setConfirmPassInput('');
+                setShowChangePassModal(true);
+              }}
+              className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition flex items-center gap-1.5 text-xs border border-slate-700"
+              title="Change your account password"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-sky-400" />
+              <span className="hidden sm:inline">Password</span>
+            </button>
 
             <button
               id="btn-operator-logout"
@@ -1970,6 +2137,20 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                               <td className="py-3.5 px-4 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
+                                    id={`btn-reset-user-password-${u.id}`}
+                                    onClick={() => {
+                                      setResetUserModalUser(u);
+                                      setResetUserNewPass('');
+                                      setResetUserError(null);
+                                      setResetUserSuccess(null);
+                                    }}
+                                    className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                                    title={`Reset Password for ${u.username}`}
+                                  >
+                                    <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                                  </button>
+
+                                  <button
                                     id={`btn-edit-user-${u.id}`}
                                     onClick={() => openEditUserModal(u)}
                                     className="p-1.5 text-slate-500 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition"
@@ -2220,6 +2401,67 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
               </div>
             )}
 
+            {/* Automated Email Configuration Card */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 border border-sky-100">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900">
+                      Automated Daily Reports Destination Email
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Cloudflare Worker Cron job dispatches daily digests to this designated address.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 truncate max-w-[220px]">
+                    {currentOrg.contact_email || 'Not configured'}
+                  </span>
+                </div>
+              </div>
+
+              <form onSubmit={handleSaveAutomatedEmail} className="mt-3.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    id="input-automated-report-email"
+                    type="email"
+                    required
+                    value={automatedEmailInput}
+                    onChange={(e) => setAutomatedEmailInput(e.target.value)}
+                    placeholder="Enter automated email recipient (e.g. executive@cantec.lk)..."
+                    className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden font-medium"
+                  />
+                </div>
+                <button
+                  id="btn-save-automated-email"
+                  type="submit"
+                  disabled={savingAutomatedEmail || !automatedEmailInput.trim() || automatedEmailInput.trim() === currentOrg.contact_email}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shadow-xs transition disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{savingAutomatedEmail ? 'Updating...' : 'Update Email'}</span>
+                </button>
+              </form>
+
+              {automatedEmailNotice && (
+                <div className="mt-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{automatedEmailNotice}</span>
+                </div>
+              )}
+              {automatedEmailError && (
+                <div className="mt-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{automatedEmailError}</span>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Daily Email Preview matching Spec #49 */}
               <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-xs">
@@ -2231,7 +2473,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                     </h4>
                   </div>
                   <span className="text-[11px] font-mono text-slate-400">
-                    Recipient: management@cantec.example.com
+                    Recipient: {currentOrg.contact_email || 'Not configured'}
                   </span>
                 </div>
 
@@ -2898,6 +3140,202 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 Remove User
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Change Current Operator Password */}
+      {showChangePassModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Change Account Password</h3>
+                  <p className="text-[11px] text-slate-500">Updating credentials for {operator.username}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowChangePassModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleChangeMyPassword} className="space-y-4">
+              {changePassSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-medium text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{changePassSuccess}</span>
+                </div>
+              )}
+
+              {changePassError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-medium text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{changePassError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Current Password *
+                </label>
+                <input
+                  id="input-change-curr-pass"
+                  type="password"
+                  required
+                  value={currentPassInput}
+                  onChange={(e) => setCurrentPassInput(e.target.value)}
+                  placeholder="Enter current password..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  New Password *
+                </label>
+                <input
+                  id="input-change-new-pass"
+                  type="password"
+                  required
+                  value={newPassInput}
+                  onChange={(e) => setNewPassInput(e.target.value)}
+                  placeholder="Enter new password (min 4 characters)..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Confirm New Password *
+                </label>
+                <input
+                  id="input-change-confirm-pass"
+                  type="password"
+                  required
+                  value={confirmPassInput}
+                  onChange={(e) => setConfirmPassInput(e.target.value)}
+                  placeholder="Re-type new password..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 focus:ring-1 focus:ring-sky-200 outline-hidden"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePassModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-submit-change-password"
+                  type="submit"
+                  disabled={changePassLoading || !currentPassInput || !newPassInput || !confirmPassInput}
+                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                >
+                  {changePassLoading ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Admin Reset User Password */}
+      {resetUserModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center border border-amber-200">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Reset Operator Password</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Assigning a new password for <span className="font-semibold text-slate-800">{resetUserModalUser.username}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setResetUserModalUser(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleResetUserPassword} className="space-y-4">
+              {resetUserSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-medium text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{resetUserSuccess}</span>
+                </div>
+              )}
+
+              {resetUserError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-medium text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{resetUserError}</span>
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    New Password *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const randomPass = Math.random().toString(36).slice(-8) + '!';
+                      setResetUserNewPass(randomPass);
+                    }}
+                    className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 flex items-center gap-1"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Generate Random</span>
+                  </button>
+                </div>
+                <input
+                  id="input-reset-user-new-pass"
+                  type="text"
+                  required
+                  value={resetUserNewPass}
+                  onChange={(e) => setResetUserNewPass(e.target.value)}
+                  placeholder="Enter or generate temporary password..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-mono text-slate-900 focus:border-amber-500 focus:ring-1 focus:ring-amber-200 outline-hidden"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Share this password with the operator securely so they can log in.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setResetUserModalUser(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-submit-reset-user-password"
+                  type="submit"
+                  disabled={resetUserLoading || !resetUserNewPass || resetUserNewPass.length < 4}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                >
+                  {resetUserLoading ? 'Saving...' : 'Set New Password'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

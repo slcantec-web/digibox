@@ -40,6 +40,9 @@ export async function generateDailyReport(
   const reportId = `report-${orgId}-${dateStr}-${Date.now()}`;
   const now = new Date().toISOString();
 
+  // Automated Email recipient: configured in organization settings or env var
+  const recipientEmail = org.contact_email?.trim() || process.env.DAILY_REPORT_EMAIL || 'management@cantec.lk';
+
   const reportPayload: DailyReport['report_payload'] = {
     organization_name: org.name,
     report_date: dateStr,
@@ -48,18 +51,16 @@ export async function generateDailyReport(
     total_complaints: stats.total_complaints,
     complaints_status_counts: stats.complaint_status_counts,
     recent_complaints: allComplaints,
+    recipient_email: recipientEmail,
   };
 
-  // Build formatted text representation as specified in #49
-  const textSummary = formatDailyEmailText(org.name, dateStr, reportPayload);
-
-  let sendStatus: 'sent' | 'failed' = 'sent';
-  let errorMessage: string | null = null;
-
-  // CloudBase Email Gateway integration
   const gatewayUrl = process.env.EMAIL_GATEWAY_URL;
   const gatewayKey = process.env.EMAIL_GATEWAY_API_KEY;
-  const recipientEmail = process.env.DAILY_REPORT_EMAIL || 'management@cantec.example.com';
+
+  let sendStatus: 'sent' | 'failed' = 'sent';
+  let errorMessage: string | undefined = undefined;
+
+  const textSummary = formatDailyEmailText(org.name, dateStr, reportPayload);
 
   if (gatewayUrl && gatewayKey) {
     try {

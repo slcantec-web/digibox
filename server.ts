@@ -198,6 +198,146 @@ app.post('/api/operator/logout', requireOperatorAuth, (req: AuthenticatedRequest
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
+// POST /api/public/reset-password - Reset user/operator password with organization verification code
+app.post('/api/public/reset-password', (req, res) => {
+  const { username, org_code, new_password } = req.body || {};
+  if (!username || !new_password) {
+    return res.status(400).json({ error: 'Username and new password are required.' });
+  }
+
+  const cleanUser = String(username).trim().toLowerCase();
+  const op = db.getOperatorByUsername(cleanUser);
+  if (!op) {
+    return res.status(404).json({ error: `No user account found with username "${cleanUser}".` });
+  }
+
+  const org = db.getOrganization(op.organization_id);
+  const providedCode = String(org_code || '').trim().toUpperCase();
+
+  // Validate Organization Code (e.g. CTP)
+  if (org && providedCode !== org.code.toUpperCase()) {
+    return res.status(403).json({
+      error: `Invalid Organization Verification Code. Expected organization code (e.g., "${org.code}").`,
+    });
+  }
+
+  if (String(new_password).length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  db.updateOperator(op.id, op.organization_id, { password: String(new_password) });
+
+  return res.json({
+    success: true,
+    message: `Password for "${op.username}" has been reset successfully! You can now log in.`,
+  });
+});
+
+// GET /api/public/automated-email - Get current automated notification email
+app.get('/api/public/automated-email', (req, res) => {
+  const org = db.getOrganizationByCode('CTP');
+  if (!org) {
+    return res.status(404).json({ error: 'Organization not found' });
+  }
+  res.json({
+    contact_email: org.contact_email || 'management@cantec.lk',
+    org_code: org.code,
+    org_name: org.name,
+  });
+});
+
+// POST /api/public/automated-email - Update automated notification email from admin login
+app.post('/api/public/automated-email', (req, res) => {
+  const { admin_username, admin_password, new_email, org_code } = req.body || {};
+
+  if (!new_email || !new_email.includes('@')) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+
+  // Verify admin authorization
+  let authorized = false;
+  let targetOrgId = 'org-cantec-001';
+
+  if (admin_username && admin_password) {
+    const op = verifyOperatorCredentials(String(admin_username).trim(), String(admin_password));
+    if (op && op.role === 'admin') {
+      authorized = true;
+      targetOrgId = op.organization_id;
+    }
+  }
+
+  // Fallback: verification with Organization Code + Master Admin check
+  if (!authorized && org_code) {
+    const org = db.getOrganizationByCode(String(org_code).trim().toUpperCase());
+    if (org) {
+      targetOrgId = org.id;
+      // If admin password also provided, test against any admin
+      if (admin_password) {
+        const adminOp = db.listOperators(org.id).find((u) => u.role === 'admin');
+        if (adminOp) {
+          const verified = verifyOperatorCredentials(adminOp.username, String(admin_password));
+          if (verified) authorized = true;
+        }
+      }
+    }
+  }
+
+  if (!authorized) {
+    return res.status(401).json({
+      error: 'Admin verification failed. Please enter valid admin credentials to update the automated email.',
+    });
+  }
+
+  const updated = db.updateOrganization(targetOrgId, { contact_email: String(new_email).trim() });
+  return res.json({
+    success: true,
+    contact_email: updated?.contact_email,
+    message: `Automated report email updated to "${updated?.contact_email}". Daily reports will be sent here.`,
+  });
+});
+
+// POST /api/operator/change-my-password - User changes their own password
+app.post('/api/operator/change-my-password', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current password and new password are required.' });
+  }
+
+  const op = verifyOperatorCredentials(req.operator!.username, String(current_password));
+  if (!op) {
+    return res.status(401).json({ error: 'Current password is incorrect.' });
+  }
+
+  if (String(new_password).length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  db.updateOperator(req.operator!.id, req.operator!.organization_id, { password: String(new_password) });
+
+  res.json({
+    success: true,
+    message: 'Your password has been changed successfully.',
+  });
+});
+
+// PATCH /api/operator/automated-email - Direct email update from reports or dashboard
+app.patch('/api/operator/automated-email', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const { contact_email } = req.body || {};
+  if (!contact_email || !String(contact_email).includes('@')) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  const updated = db.updateOrganization(req.operator!.organization_id, {
+    contact_email: String(contact_email).trim(),
+  });
+
+  res.json({
+    success: true,
+    contact_email: updated?.contact_email,
+    message: 'Automated email address updated successfully.',
+  });
+});
+
 // GET /api/operator/me
 app.get('/api/operator/me', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
   const org = db.getOrganization(req.operator!.organization_id);
