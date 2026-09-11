@@ -146,10 +146,10 @@ VALUES
   ('box-hr', 'org-cantec-001', 'CTP-HR', 'HR Suggestion Box', 'Human resources, employee welfare, workplace climate, and staff concerns.', 1),
   ('box-maintenance', 'org-cantec-001', 'CTP-MAINTENANCE', 'Maintenance Box', 'Facilities maintenance, repairs, washrooms, HVAC, and parking.', 1);
 
-INSERT OR IGNORE INTO operators (id, organization_id, username, password_hash, password_salt, role, status)
+INSERT OR REPLACE INTO operators (id, organization_id, username, password_hash, password_salt, role, status)
 VALUES
-  ('op-admin-1', 'org-cantec-001', 'admin', 'f42a7bb862ba94a4c6a959082eb4c9fb60e34c9c1ef3a31c5d9e504c54143ca3', 'cantec_salt_123', 'admin', 'active'),
-  ('op-staff-1', 'org-cantec-001', 'operator', '7d6c6aa3fd8fef499119cff74a5840bc2b885ffae6a33758117769931b26f5f3', 'op_salt_456', 'operator', 'active');
+  ('op-admin-1', 'org-cantec-001', 'admin', 'd64d0f6dc31a92e912fb664f0e52a29b1014bc6dd3b582b42c20832a3496ab68', 'cantec_salt_123', 'admin', 'active'),
+  ('op-staff-1', 'org-cantec-001', 'operator', '9256d0405b133b23ad07141c1d7b25295f21957df17a7984b5c2dd64edbef385', 'op_salt_456', 'operator', 'active');
 
 INSERT OR IGNORE INTO feedback_groups (id, organization_id, feedback_box_id, type, title, description, status)
 VALUES
