@@ -1,0 +1,6 @@
+{
+  "name": "CloudBase Digital Feedback Box",
+  "description": "Digital suggestion and complaint system with QR-code access, anonymous submission, duplicate head-count tracking, and operator dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

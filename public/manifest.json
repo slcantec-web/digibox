@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "CloudBase Digital Feedback Box",
+  "short_name": "FeedbackBox",
+  "description": "Digital Suggestion & Complaint System by CloudBase",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0284c7",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

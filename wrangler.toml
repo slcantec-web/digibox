@@ -1,0 +1,25 @@
+name = "cloudbase-digital-feedback"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve the compiled React SPA static assets from dist/
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+# Daily summary cron trigger: runs every day at 18:00 (6:00 PM)
+[triggers]
+crons = ["0 18 * * *"]
+
+# Cloudflare D1 Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudbase-feedback-db"
+database_id = "YOUR_CLOUDFLARE_D1_DATABASE_ID" # Run: npx wrangler d1 create cloudbase-feedback-db
+
+# Environment variables
+[vars]
+ORGANIZATION_ID = "org-cantec-001"
+EMAIL_GATEWAY_URL = "https://email-gateway.example.com/api/send"
+EMAIL_RECIPIENT = "management@cantec.example.com"

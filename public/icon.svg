@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#0284c7"/>
+  <rect x="76" y="140" width="360" height="250" rx="24" fill="#ffffff" filter="drop-shadow(0 10px 20px rgba(0,0,0,0.15))"/>
+  <path d="M116 190h280" stroke="#0284c7" stroke-width="16" stroke-linecap="round"/>
+  <rect x="186" y="240" width="140" height="18" rx="9" fill="#0369a1"/>
+  <circle cx="216" cy="310" r="18" fill="#e0f2fe"/>
+  <path d="M216 304v12M210 310h12" stroke="#0284c7" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="296" cy="310" r="18" fill="#fef3c7"/>
+  <path d="M296 304v8M296 316h.01" stroke="#d97706" stroke-width="4" stroke-linecap="round"/>
+  <!-- Top Slot with Suggestion card dropping in -->
+  <path d="M196 110h120v40H196z" fill="#38bdf8" rx="8"/>
+  <path d="M226 120h60" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+</svg>
