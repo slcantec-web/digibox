@@ -73,16 +73,26 @@ database_id = "PASTE_YOUR_DATABASE_ID_HERE"
 
 ## Step 4: Run the Database Migrations (Schema & Seed Data)
 
-Execute the included SQL migration to create all 9 tables (`organizations`, `feedback_boxes`, `operators`, `submissions`, `feedback_groups`, `submission_group_members`, `feedback_notes`, `sessions`, `daily_reports`) and seed the initial feedback boxes and operator credentials:
+### Option A: Fresh Database Setup
+Execute the initial SQL migration to create all 11 tables (`organizations`, `feedback_boxes`, `operators`, `submissions`, `feedback_groups`, `submission_group_members`, `feedback_notes`, `sessions`, `daily_reports`, `password_reset_logs`, `audit_logs`) with all configuration fields (`contact_email`, `welcome_message`, `thank_you_message`, `recipient_email`) and default seed data:
 
 ```bash
-# Apply schema to your Cloudflare D1 database:
+# Apply fresh schema to your Cloudflare D1 database:
 npx wrangler d1 execute cloudbase-feedback-db --remote --file=./migrations/0001_initial_schema.sql
 ```
 
-You can verify that the tables were created:
+### Option B: Upgrading an Existing D1 Database
+If you already initialized your database earlier and need to add the new tables (`password_reset_logs`, `audit_logs`) and automated report email columns without losing existing records:
+
 ```bash
-npx wrangler d1 execute cloudbase-feedback-db --remote --command="SELECT box_code, title FROM feedback_boxes;"
+# Apply incremental migration 0002:
+npx wrangler d1 execute cloudbase-feedback-db --remote --file=./migrations/0002_add_email_password_audit.sql
+```
+
+You can verify that the tables and columns were created:
+```bash
+npx wrangler d1 execute cloudbase-feedback-db --remote --command="SELECT name, contact_email FROM organizations;"
+npx wrangler d1 execute cloudbase-feedback-db --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
 ---

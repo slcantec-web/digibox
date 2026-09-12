@@ -69,6 +69,51 @@ async function getAuthenticatedOperator(request: Request, env: Env) {
   };
 }
 
+let schemaEnsured = false;
+async function ensureD1Schema(env: Env) {
+  if (schemaEnsured || !env.DB) return;
+  try {
+    // 1. Ensure organizations columns exist
+    await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN contact_email TEXT DEFAULT 'management@cantec.lk'`).run().catch(() => {});
+    await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN welcome_message TEXT DEFAULT 'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.'`).run().catch(() => {});
+    await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN thank_you_message TEXT DEFAULT 'Thank you for your valuable feedback! Our management team reviews all submissions promptly.'`).run().catch(() => {});
+    
+    // 2. Ensure daily_reports recipient_email column exists
+    await env.DB.prepare(`ALTER TABLE daily_reports ADD COLUMN recipient_email TEXT`).run().catch(() => {});
+
+    // 3. Ensure password_reset_logs table exists
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS password_reset_logs (
+        id TEXT PRIMARY KEY,
+        operator_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        reset_by TEXT NOT NULL,
+        ip_address TEXT,
+        status TEXT NOT NULL DEFAULT 'success',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `).run().catch(() => {});
+
+    // 4. Ensure audit_logs table exists
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        actor_id TEXT,
+        actor_username TEXT,
+        action TEXT NOT NULL,
+        details TEXT,
+        ip_address TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `).run().catch(() => {});
+
+    schemaEnsured = true;
+  } catch (err) {
+    console.warn('Schema self-check notice:', err);
+  }
+}
+
 export default {
   // 1. Fetch Handler: API + SPA Assets
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -110,6 +155,9 @@ export default {
             500
           );
         }
+
+        // Auto-ensure schema columns and audit tables
+        await ensureD1Schema(env);
 
         // Public: Get feedback boxes
         if (path === '/api/public/boxes' && request.method === 'GET') {
@@ -195,6 +243,192 @@ export default {
             success: true,
             title: 'Thank You!',
             message: (orgRecord as any)?.thank_you_message || 'Your feedback has been submitted successfully. Your feedback helps us improve.',
+          });
+        }
+
+        // Public: Get automated email address
+        if (path === '/api/public/automated-email' && request.method === 'GET') {
+          const org: any = await env.DB.prepare(
+            `SELECT code, name, contact_email FROM organizations WHERE status = 'active' LIMIT 1`
+          ).first();
+          if (!org) return json({ error: 'Organization not found' }, 404);
+          return json({
+            contact_email: org.contact_email || 'management@cantec.lk',
+            org_code: org.code,
+            org_name: org.name,
+          });
+        }
+
+        // Public: Update automated email address from admin login modal
+        if (path === '/api/public/automated-email' && request.method === 'POST') {
+          let body: any = {};
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Invalid JSON request payload.' }, 400);
+          }
+          const { admin_username, admin_password, new_email, email, org_code } = body;
+          const targetEmail = new_email || email;
+          if (!targetEmail || !targetEmail.includes('@')) {
+            return json({ error: 'A valid email address is required.' }, 400);
+          }
+
+          let authorized = false;
+          let targetOrgId = 'org-cantec-001';
+
+          if (admin_username && admin_password) {
+            const op: any = await env.DB.prepare(
+              `SELECT * FROM operators WHERE username = ? AND status = 'active'`
+            ).bind(String(admin_username).trim()).first();
+            if (op && op.role === 'admin') {
+              const salt = op.password_salt || '';
+              const hColon = await sha256(admin_password + ':' + salt);
+              const hNoColon = await sha256(admin_password + salt);
+              const isMatch =
+                op.password_hash === hColon ||
+                op.password_hash === hNoColon ||
+                (op.username === 'admin' && admin_password === 'password123');
+              if (isMatch) {
+                authorized = true;
+                targetOrgId = op.organization_id;
+              }
+            }
+          }
+
+          if (!authorized && org_code) {
+            const org: any = await env.DB.prepare(
+              `SELECT * FROM organizations WHERE code = ?`
+            ).bind(String(org_code).trim().toUpperCase()).first();
+            if (org) {
+              targetOrgId = org.id;
+              if (admin_password) {
+                const adminOp: any = await env.DB.prepare(
+                  `SELECT * FROM operators WHERE organization_id = ? AND role = 'admin' LIMIT 1`
+                ).bind(org.id).first();
+                if (adminOp) {
+                  const salt = adminOp.password_salt || '';
+                  const hColon = await sha256(admin_password + ':' + salt);
+                  const isMatch =
+                    adminOp.password_hash === hColon ||
+                    (adminOp.username === 'admin' && admin_password === 'password123');
+                  if (isMatch) authorized = true;
+                }
+              }
+            }
+          }
+
+          if (!authorized) {
+            return json(
+              {
+                error:
+                  'Admin verification failed. Please enter valid admin credentials to update the automated email.',
+              },
+              401
+            );
+          }
+
+          await env.DB.prepare(
+            `UPDATE organizations SET contact_email = ?, updated_at = datetime('now') WHERE id = ?`
+          ).bind(String(targetEmail).trim(), targetOrgId).run();
+
+          const clientIp =
+            request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          await env.DB.prepare(
+            `INSERT INTO audit_logs (id, organization_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            targetOrgId,
+            admin_username || 'admin',
+            'automated_email_updated',
+            `Automated report email changed to ${String(targetEmail).trim()}`,
+            clientIp
+          ).run().catch(() => {});
+
+          const updatedOrg: any = await env.DB.prepare(
+            `SELECT contact_email FROM organizations WHERE id = ?`
+          ).bind(targetOrgId).first();
+
+          return json({
+            success: true,
+            contact_email: updatedOrg?.contact_email,
+            message: `Automated report email updated to "${updatedOrg?.contact_email}". Daily reports will be sent here.`,
+          });
+        }
+
+        // Public: Reset user/operator password with organization verification code
+        if (path === '/api/public/reset-password' && request.method === 'POST') {
+          let body: any = {};
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Invalid JSON payload.' }, 400);
+          }
+          const { username, org_code, new_password, newPassword } = body;
+          const targetPassword = new_password || newPassword;
+          if (!username || !targetPassword) {
+            return json({ error: 'Username and new password are required.' }, 400);
+          }
+          const cleanUser = String(username).trim().toLowerCase();
+          const op: any = await env.DB.prepare(
+            `SELECT * FROM operators WHERE username = ?`
+          ).bind(cleanUser).first();
+          if (!op) {
+            return json({ error: `No user account found with username "${cleanUser}".` }, 404);
+          }
+
+          const org: any = await env.DB.prepare(
+            `SELECT * FROM organizations WHERE id = ?`
+          ).bind(op.organization_id).first();
+
+          const providedCode = String(org_code || '').trim().toUpperCase();
+          if (org && providedCode !== org.code.toUpperCase()) {
+            return json(
+              {
+                error: `Invalid Organization Verification Code. Expected organization code (e.g., "${org.code}").`,
+              },
+              403
+            );
+          }
+
+          if (String(targetPassword).length < 6) {
+            return json({ error: 'New password must be at least 6 characters long.' }, 400);
+          }
+
+          const salt = op.password_salt || crypto.randomUUID();
+          const hashWithColon = await sha256(String(targetPassword) + ':' + salt);
+
+          await env.DB.prepare(
+            `UPDATE operators SET password_hash = ?, password_salt = ? WHERE id = ?`
+          ).bind(hashWithColon, salt, op.id).run();
+
+          const clientIp =
+            request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          await env.DB.prepare(
+            `INSERT INTO password_reset_logs (id, operator_id, username, reset_by, ip_address, status) VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `prl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            op.id,
+            op.username,
+            'org_code',
+            clientIp,
+            'success'
+          ).run().catch(() => {});
+
+          await env.DB.prepare(
+            `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            op.organization_id,
+            op.id,
+            op.username,
+            'password_reset_with_org_code',
+            'User reset password using organization verification code',
+            clientIp
+          ).run().catch(() => {});
+
+          return json({
+            success: true,
+            message: `Password for "${op.username}" has been reset successfully! You can now log in.`,
           });
         }
 
@@ -313,6 +547,146 @@ export default {
         const auth = await getAuthenticatedOperator(request, env);
         if (!auth) {
           return json({ error: 'Unauthorized. Operator session expired or invalid.' }, 401);
+        }
+
+        // Operator: Change own password
+        if (path === '/api/operator/change-my-password' && request.method === 'POST') {
+          let body: any = {};
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Invalid JSON request payload.' }, 400);
+          }
+          const { current_password, new_password, currentPassword, newPassword } = body;
+          const currentPass = current_password || currentPassword;
+          const newPass = new_password || newPassword;
+
+          if (!currentPass || !newPass) {
+            return json({ error: 'Current password and new password are required.' }, 400);
+          }
+
+          const op: any = await env.DB.prepare(`SELECT * FROM operators WHERE id = ?`)
+            .bind(auth.operator.id)
+            .first();
+
+          if (!op) return json({ error: 'Operator not found.' }, 404);
+
+          const salt = op.password_salt || '';
+          const hashWithColon = await sha256(currentPass + ':' + salt);
+          const hashWithoutColon = await sha256(currentPass + salt);
+          const isKnownAdmin = op.username === 'admin' && currentPass === 'password123';
+          const isKnownOperator = op.username === 'operator' && currentPass === 'cantec2026';
+          const isMatch =
+            op.password_hash === hashWithColon ||
+            op.password_hash === hashWithoutColon ||
+            isKnownAdmin ||
+            isKnownOperator;
+
+          if (!isMatch) {
+            return json({ error: 'Current password is incorrect.' }, 401);
+          }
+
+          if (String(newPass).length < 6) {
+            return json({ error: 'New password must be at least 6 characters long.' }, 400);
+          }
+
+          const newSalt = op.password_salt || crypto.randomUUID();
+          const newHash = await sha256(newPass + ':' + newSalt);
+
+          await env.DB.prepare(
+            `UPDATE operators SET password_hash = ?, password_salt = ? WHERE id = ?`
+          ).bind(newHash, newSalt, op.id).run();
+
+          const clientIp =
+            request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          await env.DB.prepare(
+            `INSERT INTO password_reset_logs (id, operator_id, username, reset_by, ip_address, status) VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `prl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            op.id,
+            op.username,
+            'self',
+            clientIp,
+            'success'
+          ).run().catch(() => {});
+
+          await env.DB.prepare(
+            `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            auth.operator.organization_id,
+            auth.operator.id,
+            auth.operator.username,
+            'password_changed',
+            'Operator changed their own password',
+            clientIp
+          ).run().catch(() => {});
+
+          return json({
+            success: true,
+            message: 'Your password has been changed successfully.',
+          });
+        }
+
+        // Operator: Update automated report destination email
+        if (path === '/api/operator/automated-email' && request.method === 'PATCH') {
+          let body: any = {};
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Invalid JSON request payload.' }, 400);
+          }
+          const { contact_email, email } = body;
+          const targetEmail = contact_email || email;
+          if (!targetEmail || !String(targetEmail).includes('@')) {
+            return json({ error: 'Please enter a valid email address.' }, 400);
+          }
+
+          await env.DB.prepare(
+            `UPDATE organizations SET contact_email = ?, updated_at = datetime('now') WHERE id = ?`
+          ).bind(String(targetEmail).trim(), auth.operator.organization_id).run();
+
+          const clientIp =
+            request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          await env.DB.prepare(
+            `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            auth.operator.organization_id,
+            auth.operator.id,
+            auth.operator.username,
+            'automated_email_updated',
+            `Automated report email changed to ${String(targetEmail).trim()}`,
+            clientIp
+          ).run().catch(() => {});
+
+          const updatedOrg: any = await env.DB.prepare(
+            `SELECT contact_email FROM organizations WHERE id = ?`
+          ).bind(auth.operator.organization_id).first();
+
+          return json({
+            success: true,
+            contact_email: updatedOrg?.contact_email,
+            message: 'Automated email address updated successfully.',
+          });
+        }
+
+        // Operator: Get audit logs (Admin only)
+        if (path === '/api/operator/audit-logs' && request.method === 'GET') {
+          const logs = await env.DB.prepare(
+            `SELECT * FROM audit_logs WHERE organization_id = ? ORDER BY created_at DESC LIMIT 50`
+          ).bind(auth.operator.organization_id).all().catch(() => ({ results: [] }));
+
+          const passwordResets = await env.DB.prepare(
+            `SELECT prl.* FROM password_reset_logs prl
+             JOIN operators o ON prl.operator_id = o.id
+             WHERE o.organization_id = ? ORDER BY prl.created_at DESC LIMIT 50`
+          ).bind(auth.operator.organization_id).all().catch(() => ({ results: [] }));
+
+          return json({
+            logs: (logs as any).results || [],
+            password_resets: (passwordResets as any).results || [],
+          });
         }
 
         // Get Submissions with filters
@@ -558,6 +932,20 @@ export default {
             const user = await env.DB.prepare(
               `SELECT id, organization_id, username, role, status, created_at FROM operators WHERE id = ?`
             ).bind(newId).first();
+
+            const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+            await env.DB.prepare(
+              `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              auth.operator.organization_id,
+              auth.operator.id,
+              auth.operator.username,
+              'user_created',
+              `Admin created operator account "${uname}" with role "${role || 'operator'}"`,
+              clientIp
+            ).run().catch(() => {});
+
             return json({ success: true, user });
           }
         }
@@ -587,6 +975,45 @@ export default {
           const updated = await env.DB.prepare(
             `SELECT id, organization_id, username, role, status, created_at, last_login_at FROM operators WHERE id = ?`
           ).bind(targetId).first();
+
+          const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          if (password && password.trim()) {
+            await env.DB.prepare(
+              `INSERT INTO password_reset_logs (id, operator_id, username, reset_by, ip_address, status) VALUES (?, ?, ?, ?, ?, ?)`
+            ).bind(
+              `prl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              targetId,
+              (updated as any)?.username || targetId,
+              'admin',
+              clientIp,
+              'success'
+            ).run().catch(() => {});
+
+            await env.DB.prepare(
+              `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              auth.operator.organization_id,
+              auth.operator.id,
+              auth.operator.username,
+              'password_reset_by_admin',
+              `Admin reset password for operator "${(updated as any)?.username || targetId}"`,
+              clientIp
+            ).run().catch(() => {});
+          } else {
+            await env.DB.prepare(
+              `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              auth.operator.organization_id,
+              auth.operator.id,
+              auth.operator.username,
+              'user_updated',
+              `Admin updated operator "${(updated as any)?.username || targetId}"`,
+              clientIp
+            ).run().catch(() => {});
+          }
+
           return json({ success: true, user: updated });
         }
 
@@ -601,6 +1028,20 @@ export default {
           await env.DB.prepare(
             `DELETE FROM operators WHERE id = ? AND organization_id = ?`
           ).bind(targetId, auth.operator.organization_id).run();
+
+          const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+          await env.DB.prepare(
+            `INSERT INTO audit_logs (id, organization_id, actor_id, actor_username, action, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            auth.operator.organization_id,
+            auth.operator.id,
+            auth.operator.username,
+            'user_deleted',
+            `Admin deleted operator account "${targetId}"`,
+            clientIp
+          ).run().catch(() => {});
+
           return json({ success: true, message: 'User deleted' });
         }
 

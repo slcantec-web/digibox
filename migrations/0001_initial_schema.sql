@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS organizations (
   name TEXT NOT NULL,
   code TEXT UNIQUE NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
+  contact_email TEXT DEFAULT 'management@cantec.lk',
+  welcome_message TEXT DEFAULT 'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.',
+  thank_you_message TEXT DEFAULT 'Thank you for your valuable feedback! Our management team reviews all submissions promptly.',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -140,6 +143,7 @@ CREATE TABLE IF NOT EXISTS daily_reports (
   organization_id TEXT NOT NULL,
   report_date TEXT NOT NULL,
   status TEXT NOT NULL,
+  recipient_email TEXT,
   sent_at TEXT,
   error_message TEXT,
   report_payload TEXT NOT NULL, -- JSON string
@@ -150,13 +154,53 @@ CREATE TABLE IF NOT EXISTS daily_reports (
 
 CREATE INDEX IF NOT EXISTS idx_reports_org_date ON daily_reports(organization_id, report_date);
 
+-- 10. Password Reset Logs (Captures all operator password resets and changes)
+CREATE TABLE IF NOT EXISTS password_reset_logs (
+  id TEXT PRIMARY KEY,
+  operator_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  reset_by TEXT NOT NULL, -- 'self' | 'admin' | 'org_code'
+  ip_address TEXT,
+  status TEXT NOT NULL DEFAULT 'success',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_pw_resets_op ON password_reset_logs(operator_id);
+CREATE INDEX IF NOT EXISTS idx_pw_resets_date ON password_reset_logs(created_at);
+
+-- 11. Audit Logs (Captures automated report email changes, settings changes, and admin operations)
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  actor_id TEXT,
+  actor_username TEXT,
+  action TEXT NOT NULL, -- 'automated_email_updated', 'password_changed', 'password_reset', 'organization_updated', 'user_created', etc.
+  details TEXT,
+  ip_address TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_logs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_logs(created_at);
+
 -- ============================================================
 -- INITIAL SEED DATA
 -- ============================================================
 
 -- Insert Organization
-INSERT OR IGNORE INTO organizations (id, name, code, status)
-VALUES ('org-cantec-001', 'Cantec Printing & Packaging', 'CTP', 'active');
+INSERT OR IGNORE INTO organizations (id, name, code, status, contact_email, welcome_message, thank_you_message)
+VALUES (
+  'org-cantec-001',
+  'Cantec Printing & Packaging',
+  'CTP',
+  'active',
+  'management@cantec.lk',
+  'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.',
+  'Thank you for your valuable feedback! Our management team reviews all submissions promptly.'
+);
 
 -- Insert 5 Feedback Boxes
 INSERT OR IGNORE INTO feedback_boxes (id, organization_id, box_code, title, description, public_enabled)

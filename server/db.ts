@@ -24,6 +24,27 @@ export interface Session {
   last_activity_at: string;
 }
 
+export interface PasswordResetLog {
+  id: string;
+  operator_id: string;
+  username: string;
+  reset_by: 'self' | 'admin' | 'org_code';
+  ip_address?: string;
+  status: 'success' | 'failed';
+  created_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  organization_id: string;
+  actor_id?: string;
+  actor_username?: string;
+  action: string;
+  details?: string;
+  ip_address?: string;
+  created_at: string;
+}
+
 interface DatabaseSchema {
   organizations: Organization[];
   feedback_boxes: FeedbackBox[];
@@ -34,6 +55,8 @@ interface DatabaseSchema {
   feedback_notes: FeedbackNote[];
   sessions: Session[];
   daily_reports: DailyReport[];
+  password_reset_logs: PasswordResetLog[];
+  audit_logs: AuditLog[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -62,7 +85,10 @@ class D1DatabaseStore {
       }
       if (fs.existsSync(DB_FILE)) {
         const content = fs.readFileSync(DB_FILE, 'utf-8');
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        parsed.password_reset_logs = parsed.password_reset_logs || [];
+        parsed.audit_logs = parsed.audit_logs || [];
+        return parsed;
       }
     } catch (err) {
       console.warn('Failed to read database file, initializing default seed', err);
@@ -516,10 +542,75 @@ class D1DatabaseStore {
       feedback_notes,
       sessions: [],
       daily_reports: [],
+      password_reset_logs: [],
+      audit_logs: [],
     };
   }
 
   // --- Database Methods ---
+
+  public logPasswordReset(data: {
+    operator_id: string;
+    username: string;
+    reset_by: 'self' | 'admin' | 'org_code';
+    ip_address?: string;
+    status?: 'success' | 'failed';
+  }): PasswordResetLog {
+    const entry: PasswordResetLog = {
+      id: `prl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      operator_id: data.operator_id,
+      username: data.username,
+      reset_by: data.reset_by,
+      ip_address: data.ip_address,
+      status: data.status || 'success',
+      created_at: new Date().toISOString(),
+    };
+    this.data.password_reset_logs = this.data.password_reset_logs || [];
+    this.data.password_reset_logs.unshift(entry);
+    this.saveData();
+    return entry;
+  }
+
+  public logAudit(data: {
+    organization_id: string;
+    actor_id?: string;
+    actor_username?: string;
+    action: string;
+    details?: string;
+    ip_address?: string;
+  }): AuditLog {
+    const entry: AuditLog = {
+      id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      organization_id: data.organization_id,
+      actor_id: data.actor_id,
+      actor_username: data.actor_username,
+      action: data.action,
+      details: data.details,
+      ip_address: data.ip_address,
+      created_at: new Date().toISOString(),
+    };
+    this.data.audit_logs = this.data.audit_logs || [];
+    this.data.audit_logs.unshift(entry);
+    this.saveData();
+    return entry;
+  }
+
+  public listAuditLogs(organizationId: string, limit = 50): AuditLog[] {
+    this.data.audit_logs = this.data.audit_logs || [];
+    return this.data.audit_logs
+      .filter((a) => a.organization_id === organizationId)
+      .slice(0, limit);
+  }
+
+  public listPasswordResetLogs(operatorId?: string, limit = 50): PasswordResetLog[] {
+    this.data.password_reset_logs = this.data.password_reset_logs || [];
+    if (operatorId) {
+      return this.data.password_reset_logs
+        .filter((l) => l.operator_id === operatorId)
+        .slice(0, limit);
+    }
+    return this.data.password_reset_logs.slice(0, limit);
+  }
 
   public getOrganization(id: string): Organization | undefined {
     return this.data.organizations.find((o) => o.id === id);

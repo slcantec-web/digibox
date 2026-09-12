@@ -200,8 +200,9 @@ app.post('/api/operator/logout', requireOperatorAuth, (req: AuthenticatedRequest
 
 // POST /api/public/reset-password - Reset user/operator password with organization verification code
 app.post('/api/public/reset-password', (req, res) => {
-  const { username, org_code, new_password } = req.body || {};
-  if (!username || !new_password) {
+  const { username, org_code, new_password, newPassword } = req.body || {};
+  const targetPassword = new_password || newPassword;
+  if (!username || !targetPassword) {
     return res.status(400).json({ error: 'Username and new password are required.' });
   }
 
@@ -221,11 +222,28 @@ app.post('/api/public/reset-password', (req, res) => {
     });
   }
 
-  if (String(new_password).length < 6) {
+  if (String(targetPassword).length < 6) {
     return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
 
-  db.updateOperator(op.id, op.organization_id, { password: String(new_password) });
+  db.updateOperator(op.id, op.organization_id, { password: String(targetPassword) });
+
+  db.logPasswordReset({
+    operator_id: op.id,
+    username: op.username,
+    reset_by: 'org_code',
+    ip_address: req.ip,
+    status: 'success',
+  });
+
+  db.logAudit({
+    organization_id: op.organization_id,
+    actor_id: op.id,
+    actor_username: op.username,
+    action: 'password_reset_with_org_code',
+    details: `User reset password using organization verification code`,
+    ip_address: req.ip,
+  });
 
   return res.json({
     success: true,
@@ -248,9 +266,10 @@ app.get('/api/public/automated-email', (req, res) => {
 
 // POST /api/public/automated-email - Update automated notification email from admin login
 app.post('/api/public/automated-email', (req, res) => {
-  const { admin_username, admin_password, new_email, org_code } = req.body || {};
+  const { admin_username, admin_password, new_email, email, org_code } = req.body || {};
+  const targetEmail = new_email || email;
 
-  if (!new_email || !new_email.includes('@')) {
+  if (!targetEmail || !targetEmail.includes('@')) {
     return res.status(400).json({ error: 'A valid email address is required.' });
   }
 
@@ -288,7 +307,16 @@ app.post('/api/public/automated-email', (req, res) => {
     });
   }
 
-  const updated = db.updateOrganization(targetOrgId, { contact_email: String(new_email).trim() });
+  const updated = db.updateOrganization(targetOrgId, { contact_email: String(targetEmail).trim() });
+
+  db.logAudit({
+    organization_id: targetOrgId,
+    actor_username: admin_username || 'admin',
+    action: 'automated_email_updated',
+    details: `Automated report email changed to ${String(targetEmail).trim()}`,
+    ip_address: req.ip,
+  });
+
   return res.json({
     success: true,
     contact_email: updated?.contact_email,
@@ -298,21 +326,41 @@ app.post('/api/public/automated-email', (req, res) => {
 
 // POST /api/operator/change-my-password - User changes their own password
 app.post('/api/operator/change-my-password', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
-  const { current_password, new_password } = req.body || {};
-  if (!current_password || !new_password) {
+  const { current_password, new_password, currentPassword, newPassword } = req.body || {};
+  const currentPass = current_password || currentPassword;
+  const newPass = new_password || newPassword;
+
+  if (!currentPass || !newPass) {
     return res.status(400).json({ error: 'Current password and new password are required.' });
   }
 
-  const op = verifyOperatorCredentials(req.operator!.username, String(current_password));
+  const op = verifyOperatorCredentials(req.operator!.username, String(currentPass));
   if (!op) {
     return res.status(401).json({ error: 'Current password is incorrect.' });
   }
 
-  if (String(new_password).length < 6) {
+  if (String(newPass).length < 6) {
     return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
 
-  db.updateOperator(req.operator!.id, req.operator!.organization_id, { password: String(new_password) });
+  db.updateOperator(req.operator!.id, req.operator!.organization_id, { password: String(newPass) });
+
+  db.logPasswordReset({
+    operator_id: req.operator!.id,
+    username: req.operator!.username,
+    reset_by: 'self',
+    ip_address: req.ip,
+    status: 'success',
+  });
+
+  db.logAudit({
+    organization_id: req.operator!.organization_id,
+    actor_id: req.operator!.id,
+    actor_username: req.operator!.username,
+    action: 'password_changed',
+    details: `Operator changed their own password`,
+    ip_address: req.ip,
+  });
 
   res.json({
     success: true,
@@ -322,13 +370,24 @@ app.post('/api/operator/change-my-password', requireOperatorAuth, (req: Authenti
 
 // PATCH /api/operator/automated-email - Direct email update from reports or dashboard
 app.patch('/api/operator/automated-email', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
-  const { contact_email } = req.body || {};
-  if (!contact_email || !String(contact_email).includes('@')) {
+  const { contact_email, email } = req.body || {};
+  const targetEmail = contact_email || email;
+
+  if (!targetEmail || !String(targetEmail).includes('@')) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
 
   const updated = db.updateOrganization(req.operator!.organization_id, {
-    contact_email: String(contact_email).trim(),
+    contact_email: String(targetEmail).trim(),
+  });
+
+  db.logAudit({
+    organization_id: req.operator!.organization_id,
+    actor_id: req.operator!.id,
+    actor_username: req.operator!.username,
+    action: 'automated_email_updated',
+    details: `Automated report email changed to ${String(targetEmail).trim()}`,
+    ip_address: req.ip,
   });
 
   res.json({
@@ -523,7 +582,43 @@ app.patch('/api/operator/users/:id', requireOperatorAuth, (req: AuthenticatedReq
   if (!updated) {
     return res.status(404).json({ error: 'User not found' });
   }
+
+  if (password) {
+    db.logPasswordReset({
+      operator_id: updated.id,
+      username: updated.username,
+      reset_by: 'admin',
+      ip_address: req.ip,
+      status: 'success',
+    });
+    db.logAudit({
+      organization_id: orgId,
+      actor_id: req.operator!.id,
+      actor_username: req.operator!.username,
+      action: 'password_reset_by_admin',
+      details: `Admin reset password for operator "${updated.username}"`,
+      ip_address: req.ip,
+    });
+  } else {
+    db.logAudit({
+      organization_id: orgId,
+      actor_id: req.operator!.id,
+      actor_username: req.operator!.username,
+      action: 'user_updated',
+      details: `Admin updated operator "${updated.username}" (role: ${updated.role}, status: ${updated.status})`,
+      ip_address: req.ip,
+    });
+  }
+
   res.json({ success: true, user: updated });
+});
+
+// GET /api/operator/audit-logs - View recent audit logs (Admin only)
+app.get('/api/operator/audit-logs', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
+  const orgId = req.operator!.organization_id;
+  const logs = db.listAuditLogs(orgId);
+  const passwordResets = db.listPasswordResetLogs();
+  res.json({ logs, password_resets: passwordResets });
 });
 
 // DELETE /api/operator/users/:id - Delete operator (Admin only)
