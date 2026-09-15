@@ -1,1 +1,40 @@
 @import "tailwindcss";
+
+/* Crisp rendering for QR codes to avoid blur on low-DPI displays */
+.qr-crisp {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* Dedicated Print Styles for Official Feedback Placards */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide everything marked .no-print */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Show only the active printable placard */
+  .printable-placard {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+}
