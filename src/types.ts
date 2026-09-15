@@ -36,6 +36,15 @@ export interface Organization {
   updated_at: string;
 }
 
+export interface FeedbackBoxGroupSummary {
+  id: string;
+  title: string;
+  type: SubmissionType;
+  submission_count: number;
+  estimated_devices: number;
+  status: string;
+}
+
 export interface FeedbackBox {
   id: string;
   organization_id: string;
@@ -45,6 +54,21 @@ export interface FeedbackBox {
   public_enabled: boolean;
   created_at: string;
   updated_at: string;
+  // Synced Head Count & Group Metrics
+  submission_count?: number;
+  suggestions_count?: number;
+  complaints_count?: number;
+  estimated_devices?: number;
+  groups_count?: number;
+  active_groups?: FeedbackBoxGroupSummary[];
+}
+
+export interface FeedbackGroupBoxContribution {
+  box_id: string;
+  box_code: string;
+  box_title: string;
+  count: number;
+  devices: number;
 }
 
 export interface Operator {
@@ -86,6 +110,8 @@ export interface FeedbackGroup {
   id: string;
   organization_id: string;
   feedback_box_id?: string;
+  feedback_box_title?: string;
+  feedback_box_code?: string;
   type: SubmissionType;
   title: string;
   description?: string;
@@ -95,6 +121,7 @@ export interface FeedbackGroup {
   submission_count: number;
   estimated_devices: number;
   sample_messages?: string[];
+  boxes_breakdown?: FeedbackGroupBoxContribution[];
 }
 
 export interface SubmissionGroupMember {

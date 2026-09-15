@@ -688,7 +688,8 @@ app.post('/api/operator/submissions/:id/notes', requireOperatorAuth, (req: Authe
 app.get('/api/operator/groups', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
   const orgId = req.operator!.organization_id;
   const type = req.query.type as SubmissionType | undefined;
-  const groups = db.listGroups(orgId, type);
+  const boxId = req.query.box_id as string | undefined;
+  const groups = db.listGroups(orgId, type, boxId);
   res.json({ groups });
 });
 
@@ -709,7 +710,7 @@ app.post('/api/operator/groups', requireOperatorAuth, (req: AuthenticatedRequest
     type,
     title,
     description,
-    feedback_box_id,
+    feedback_box_id: feedback_box_id || undefined,
     initial_submission_ids,
   });
 
@@ -719,9 +720,9 @@ app.post('/api/operator/groups', requireOperatorAuth, (req: AuthenticatedRequest
 // PATCH /api/operator/groups/:id
 app.patch('/api/operator/groups/:id', requireOperatorAuth, (req: AuthenticatedRequest, res) => {
   const orgId = req.operator!.organization_id;
-  const { title, description, status } = req.body || {};
+  const { title, description, status, feedback_box_id } = req.body || {};
 
-  const updated = db.updateGroup(req.params.id, orgId, { title, description, status });
+  const updated = db.updateGroup(req.params.id, orgId, { title, description, status, feedback_box_id });
   if (!updated) {
     return res.status(404).json({ error: 'Group not found' });
   }

@@ -163,11 +163,22 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
   const [addingNote, setAddingNote] = useState<boolean>(false);
   const [loadingDetail, setLoadingDetail] = useState<boolean>(false);
 
-  // Group creation modal
+  // Group creation & editing modal
   const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false);
   const [newGroupTitle, setNewGroupTitle] = useState<string>('');
   const [newGroupType, setNewGroupType] = useState<SubmissionType>('suggestion');
   const [newGroupDesc, setNewGroupDesc] = useState<string>('');
+  const [newGroupBoxId, setNewGroupBoxId] = useState<string>('all');
+
+  const [editingGroup, setEditingGroup] = useState<FeedbackGroup | null>(null);
+  const [editGroupTitle, setEditGroupTitle] = useState<string>('');
+  const [editGroupDesc, setEditGroupDesc] = useState<string>('');
+  const [editGroupStatus, setEditGroupStatus] = useState<FeedbackGroup['status']>('Active');
+  const [editGroupBoxId, setEditGroupBoxId] = useState<string>('all');
+  const [savingGroupEdit, setSavingGroupEdit] = useState<boolean>(false);
+
+  // Group Box Filter for synchronizing with Boxes & QR Codes
+  const [groupSelectedBoxFilter, setGroupSelectedBoxFilter] = useState<string>('all');
 
   // Daily Report Trigger
   const [triggeringReport, setTriggeringReport] = useState<boolean>(false);
@@ -251,10 +262,14 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
     }
   };
 
-  // Load Groups
-  const fetchGroups = async () => {
+  // Load Groups (Synced with Boxes & QR Codes)
+  const fetchGroups = async (boxFilter?: string) => {
     try {
-      const res = await fetch('/api/operator/groups', { headers: authHeaders });
+      const activeBox = boxFilter !== undefined ? boxFilter : groupSelectedBoxFilter;
+      const url = activeBox && activeBox !== 'all'
+        ? `/api/operator/groups?box_id=${encodeURIComponent(activeBox)}`
+        : '/api/operator/groups';
+      const res = await fetch(url, { headers: authHeaders });
       if (res.ok) {
         const data = await res.json();
         setGroups(data.groups || []);
@@ -950,7 +965,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
     }
   };
 
-  // Create Group
+  // Create Group (Synced with Feedback Boxes & QR Codes)
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGroupTitle.trim()) return;
@@ -963,20 +978,59 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
           title: newGroupTitle.trim(),
           type: newGroupType,
           description: newGroupDesc.trim(),
+          feedback_box_id: newGroupBoxId === 'all' ? undefined : newGroupBoxId,
         }),
       });
       if (res.ok) {
         setShowCreateGroupModal(false);
         setNewGroupTitle('');
         setNewGroupDesc('');
-        fetchGroups();
+        setNewGroupBoxId('all');
+        await Promise.all([fetchGroups(), fetchBoxes(), fetchStats()]);
       }
     } catch (err) {
       console.error('Failed to create group', err);
     }
   };
 
-  // Delete Group
+  // Open Edit Group Modal
+  const openEditGroupModal = (group: FeedbackGroup) => {
+    setEditingGroup(group);
+    setEditGroupTitle(group.title);
+    setEditGroupDesc(group.description || '');
+    setEditGroupStatus(group.status || 'Active');
+    setEditGroupBoxId(group.feedback_box_id || 'all');
+  };
+
+  // Submit Edit Group
+  const handleEditGroupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGroup || !editGroupTitle.trim()) return;
+
+    setSavingGroupEdit(true);
+    try {
+      const res = await fetch(`/api/operator/groups/${editingGroup.id}`, {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          title: editGroupTitle.trim(),
+          description: editGroupDesc.trim(),
+          status: editGroupStatus,
+          feedback_box_id: editGroupBoxId === 'all' ? null : editGroupBoxId,
+        }),
+      });
+      if (res.ok) {
+        setEditingGroup(null);
+        await Promise.all([fetchGroups(), fetchBoxes(), fetchStats()]);
+      }
+    } catch (err) {
+      console.error('Failed to update group', err);
+    } finally {
+      setSavingGroupEdit(false);
+    }
+  };
+
+  // Delete Group (Keeps submissions intact and re-syncs boxes & head counts)
   const handleDeleteGroup = async (groupId: string) => {
     if (!window.confirm('Delete this feedback group? Individual feedback submissions will remain intact.')) {
       return;
@@ -987,9 +1041,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
         headers: authHeaders,
       });
       if (res.ok) {
-        fetchGroups();
-        fetchSubmissions();
-        fetchStats();
+        await Promise.all([fetchGroups(), fetchBoxes(), fetchSubmissions(), fetchStats()]);
       }
     } catch (err) {
       console.error('Failed to delete group', err);
@@ -1642,116 +1694,295 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
           <div className="space-y-5">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
               <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Feedback Groups & Head Count Calculation
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-slate-900">
+                    Feedback Groups & Head Count Calculation
+                  </h3>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
+                    Synced with Boxes & QR
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Every submission remains an independent database record. Groups aggregate head count & estimated unique devices.
+                  Every submission remains an independent database record. Groups aggregate head count & estimated unique devices across your physical and digital QR boxes.
                 </p>
               </div>
-              <button
-                id="btn-open-create-group"
-                onClick={() => setShowCreateGroupModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Create New Group</span>
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  id="btn-open-create-group"
+                  onClick={() => setShowCreateGroupModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 text-xs font-semibold shadow-xs transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create New Group</span>
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {groups.map((group) => (
-                <div
-                  key={group.id}
-                  id={`group-card-${group.id}`}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between"
+            {/* Sync & Filter Bar with Boxes & QR Codes */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                  <Filter className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Filter by QR Box / Location:</span>
+                </div>
+                <select
+                  id="select-group-box-filter"
+                  value={groupSelectedBoxFilter}
+                  onChange={(e) => {
+                    const newFilter = e.target.value;
+                    setGroupSelectedBoxFilter(newFilter);
+                    fetchGroups(newFilter);
+                  }}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-hidden"
                 >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
-                            group.type === 'suggestion'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {group.type === 'suggestion' ? '💡 Suggestion' : '⚠ Complaint'}
-                        </span>
-                        <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                          {group.status}
-                        </span>
+                  <option value="all">🌐 All Feedback Boxes (Cross-Facility Head Count)</option>
+                  {boxes.map((box) => (
+                    <option key={box.id} value={box.id}>
+                      📍 {box.title} ({box.box_code}) — {box.submission_count || 0} Submissions · {box.groups_count || 0} Groups
+                    </option>
+                  ))}
+                </select>
+
+                {groupSelectedBoxFilter !== 'all' && (
+                  <button
+                    onClick={() => {
+                      setGroupSelectedBoxFilter('all');
+                      fetchGroups('all');
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-800 bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg transition"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>Clear Box Filter</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                <button
+                  onClick={() => {
+                    fetchGroups(groupSelectedBoxFilter);
+                    fetchBoxes();
+                    fetchStats();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 transition"
+                  title="Synchronize Group head counts with Box submissions"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Sync Head Count</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('qrcodes');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 transition"
+                  title="Navigate to Boxes & QR Codes"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Manage QR Boxes →</span>
+                </button>
+              </div>
+            </div>
+
+            {groups.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+                <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <h4 className="text-sm font-bold text-slate-800">No Feedback Groups Found</h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  {groupSelectedBoxFilter !== 'all'
+                    ? 'No groups are currently associated with this selected feedback box. Submissions from this box can be clustered or assigned to any group.'
+                    : 'Create feedback groups to aggregate related submissions into unified issues with automated head count and device telemetry.'}
+                </p>
+                {groupSelectedBoxFilter !== 'all' ? (
+                  <button
+                    onClick={() => {
+                      setGroupSelectedBoxFilter('all');
+                      fetchGroups('all');
+                    }}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-semibold"
+                  >
+                    View All Groups Across All Boxes
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowCreateGroupModal(true)}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create First Group</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {groups.map((group) => (
+                  <div
+                    key={group.id}
+                    id={`group-card-${group.id}`}
+                    className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
+                              group.type === 'suggestion'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {group.type === 'suggestion' ? '💡 Suggestion' : '⚠ Complaint'}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {group.status}
+                          </span>
+
+                          {/* Synced Target Box Badge */}
+                          {group.feedback_box_id && group.feedback_box_code ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md"
+                              title="Locked to this QR Box"
+                            >
+                              <Building2 className="w-3 h-3 text-sky-600" />
+                              <span>{group.feedback_box_title || group.feedback_box_code} [{group.feedback_box_code}]</span>
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md"
+                              title="Aggregates submissions across all physical QR boxes"
+                            >
+                              <Layers className="w-3 h-3 text-indigo-600" />
+                              <span>Cross-Facility ({group.boxes_breakdown?.length || 0} boxes)</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openEditGroupModal(group)}
+                            className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 transition"
+                            title="Edit group & assigned box"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteGroup(group.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
+                            title="Delete group (keeps original feedback intact)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
+                      <h4 className="text-base font-bold text-slate-900">{group.title}</h4>
+                      {group.description && (
+                        <p className="text-xs text-slate-500 mt-1">{group.description}</p>
+                      )}
+
+                      {/* Head count metric showcase */}
+                      <div className="mt-4 p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-around text-center">
+                        <div>
+                          <div className="text-2xl font-black text-indigo-950">
+                            {group.submission_count}
+                          </div>
+                          <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">
+                            Total Head Count
+                          </div>
+                        </div>
+                        <div className="h-8 w-px bg-indigo-200" />
+                        <div>
+                          <div className="text-2xl font-black text-indigo-950">
+                            {group.estimated_devices}
+                          </div>
+                          <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">
+                            Estimated Devices
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Head Count Contribution by Contributing QR Boxes */}
+                      <div className="mt-3.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                        <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">
+                          <span className="flex items-center gap-1.5">
+                            <QrCode className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Head Count by QR Location / Box</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-semibold lowercase">
+                            {group.boxes_breakdown?.length || 0} locations synced
+                          </span>
+                        </div>
+
+                        {(!group.boxes_breakdown || group.boxes_breakdown.length === 0) ? (
+                          <p className="text-[11px] text-slate-400 italic">
+                            No submissions in this group yet. QR box scans matching this issue will automatically sync here.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {group.boxes_breakdown.map((b) => (
+                              <div
+                                key={b.box_id}
+                                className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-mono text-[10px] font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                                    {b.box_code}
+                                  </span>
+                                  <span className="font-semibold text-slate-800 truncate text-[11px]">
+                                    {b.box_title}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="font-bold text-indigo-900 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[11px]">
+                                    {b.count} <span className="text-[9px] font-semibold text-indigo-600">head count</span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 hidden sm:inline">
+                                    ({b.devices} dev.)
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Sample feedback previews */}
+                      {group.sample_messages && group.sample_messages.length > 0 && (
+                        <div className="mt-3.5 text-xs text-slate-600">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                            Sample Submissions in Group:
+                          </span>
+                          <ul className="space-y-1 pl-3 list-disc text-slate-600">
+                            {group.sample_messages.map((msg, i) => (
+                              <li key={i} className="line-clamp-1 italic text-[11px]">
+                                "{msg}"
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Group ID: {group.id}
+                      </span>
                       <button
-                        onClick={() => handleDeleteGroup(group.id)}
-                        className="text-slate-400 hover:text-rose-600 p-1"
-                        title="Delete group (keeps original feedback intact)"
+                        onClick={() => {
+                          setSelectedGroupId(group.id);
+                          setActiveTab('all');
+                        }}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        View All Submissions →
                       </button>
                     </div>
-
-                    <h4 className="text-base font-bold text-slate-900">{group.title}</h4>
-                    {group.description && (
-                      <p className="text-xs text-slate-500 mt-1">{group.description}</p>
-                    )}
-
-                    {/* Head count metric showcase */}
-                    <div className="mt-4 p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-around text-center">
-                      <div>
-                        <div className="text-xl font-black text-indigo-950">
-                          {group.submission_count}
-                        </div>
-                        <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">
-                          Head Count
-                        </div>
-                      </div>
-                      <div className="h-8 w-px bg-indigo-200" />
-                      <div>
-                        <div className="text-xl font-black text-indigo-950">
-                          {group.estimated_devices}
-                        </div>
-                        <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">
-                          Estimated Devices
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Sample feedback previews */}
-                    {group.sample_messages && group.sample_messages.length > 0 && (
-                      <div className="mt-3.5 text-xs text-slate-600">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                          Sample Submissions in Group:
-                        </span>
-                        <ul className="space-y-1 pl-3 list-disc text-slate-600">
-                          {group.sample_messages.map((msg, i) => (
-                            <li key={i} className="line-clamp-1 italic text-[11px]">
-                              "{msg}"
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
                   </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      Group ID: {group.id}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setSelectedGroupId(group.id);
-                        setActiveTab('all');
-                      }}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-                    >
-                      View All Submissions →
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2151,6 +2382,82 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                           <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
                           <span>100% Mobile Ready (Samsung M02 tested)</span>
                         </span>
+                      </div>
+
+                      {/* Synced Activity & Head Count Section (Spec sync with Groups & Head Count) */}
+                      <div className="w-full my-2 p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-100 text-left">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-indigo-600" />
+                            <span className="text-xs font-bold text-slate-900">Synced Head Count</span>
+                          </div>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                            <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
+                            Live Synced
+                          </span>
+                        </div>
+
+                        {/* Head Count & Device Metrics */}
+                        <div className="grid grid-cols-2 gap-2 text-center">
+                          <div className="bg-white/90 p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                            <div className="text-lg font-black text-indigo-950">{box.submission_count || 0}</div>
+                            <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Submissions</div>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                            <div className="text-lg font-black text-indigo-950">{box.estimated_devices || 0}</div>
+                            <div className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Devices</div>
+                          </div>
+                        </div>
+
+                        {/* Suggestions / Complaints Breakdown */}
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-600 px-1 font-medium">
+                          <span>💡 {box.suggestions_count || 0} suggestions</span>
+                          <span>⚠ {box.complaints_count || 0} complaints</span>
+                        </div>
+
+                        {/* Active Linked Groups for this Box */}
+                        {box.active_groups && box.active_groups.length > 0 && (
+                          <div className="mt-2.5 pt-2 border-t border-indigo-100">
+                            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                              <span>Linked Groups ({box.active_groups.length}):</span>
+                            </div>
+                            <div className="space-y-1">
+                              {box.active_groups.slice(0, 3).map((grp) => (
+                                <div
+                                  key={grp.id}
+                                  className="flex items-center justify-between bg-white px-2 py-1 rounded-lg border border-indigo-100 text-[11px]"
+                                >
+                                  <span className="truncate max-w-[140px] text-slate-800 font-medium">
+                                    {grp.type === 'suggestion' ? '💡' : '⚠'} {grp.title}
+                                  </span>
+                                  <span className="font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded text-[10px] shrink-0">
+                                    {grp.submission_count} <span className="text-indigo-600 font-normal">count</span>
+                                  </span>
+                                </div>
+                              ))}
+                              {box.active_groups.length > 3 && (
+                                <span className="text-[10px] text-slate-400 block text-right pt-0.5">
+                                  +{box.active_groups.length - 3} more groups
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Quick Action: Jump to Groups filtered for this box */}
+                        <button
+                          id={`btn-box-groups-${box.box_code}`}
+                          onClick={() => {
+                            setGroupSelectedBoxFilter(box.id);
+                            fetchGroups(box.id);
+                            setActiveTab('groups');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="mt-3 w-full inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold transition shadow-xs"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>View Groups & Head Count ({box.groups_count || 0}) →</span>
+                        </button>
                       </div>
 
                       {/* Card Actions */}
@@ -3021,6 +3328,27 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Assign to Feedback Box / QR Location
+                </label>
+                <select
+                  value={newGroupBoxId}
+                  onChange={(e) => setNewGroupBoxId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-sky-500 outline-hidden bg-white"
+                >
+                  <option value="all">🌐 All Boxes / Cross-Facility (Syncs from any QR code)</option>
+                  {boxes.map((box) => (
+                    <option key={box.id} value={box.id}>
+                      📍 {box.title} ({box.box_code})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  If selected, this group will be linked to this specific physical box, and its head count metrics will sync with it.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
                   Description (Optional)
                 </label>
                 <textarea
@@ -3046,6 +3374,105 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                   className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition disabled:opacity-50"
                 >
                   Create Group
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Edit Feedback Group (Synced with Feedback Boxes & QR Codes) */}
+      {editingGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-base font-bold text-slate-900">Edit Feedback Group</h3>
+              </div>
+              <button
+                onClick={() => setEditingGroup(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditGroupSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Group Title / Issue Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editGroupTitle}
+                  onChange={(e) => setEditGroupTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Status
+                </label>
+                <select
+                  value={editGroupStatus}
+                  onChange={(e) => setEditGroupStatus(e.target.value as FeedbackGroup['status'])}
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-500 outline-hidden bg-white"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Under Review">Under Review</option>
+                  <option value="Resolved">Resolved</option>
+                  <option value="Archived">Archived</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Target Feedback Box / QR Location
+                </label>
+                <select
+                  value={editGroupBoxId}
+                  onChange={(e) => setEditGroupBoxId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-500 outline-hidden bg-white"
+                >
+                  <option value="all">🌐 All Boxes / Cross-Facility (Multi-Location Sync)</option>
+                  {boxes.map((box) => (
+                    <option key={box.id} value={box.id}>
+                      📍 {box.title} ({box.box_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Description
+                </label>
+                <textarea
+                  rows={3}
+                  value={editGroupDesc}
+                  onChange={(e) => setEditGroupDesc(e.target.value)}
+                  placeholder="Summary of what this feedback cluster represents..."
+                  className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-indigo-500 outline-hidden"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingGroup(null)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editGroupTitle.trim() || savingGroupEdit}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition disabled:opacity-50"
+                >
+                  {savingGroupEdit ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

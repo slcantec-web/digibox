@@ -4,7 +4,9 @@ import path from 'path';
 import {
   DailyReport,
   FeedbackBox,
+  FeedbackBoxGroupSummary,
   FeedbackGroup,
+  FeedbackGroupBoxContribution,
   FeedbackNote,
   Operator,
   Organization,
@@ -629,7 +631,50 @@ class D1DatabaseStore {
   }
 
   public getAllFeedbackBoxes(orgId: string): FeedbackBox[] {
-    return this.data.feedback_boxes.filter((b) => b.organization_id === orgId);
+    const orgSubs = this.data.submissions.filter((s) => s.organization_id === orgId);
+    const orgGroups = this.data.feedback_groups.filter((g) => g.organization_id === orgId);
+
+    return this.data.feedback_boxes
+      .filter((b) => b.organization_id === orgId)
+      .map((b) => {
+        const boxSubs = orgSubs.filter((s) => s.feedback_box_id === b.id);
+        const uniqueDevices = new Set(boxSubs.map((s) => s.device_token_hash));
+
+        // Find all groups associated with this box (either explicitly targeted or containing box submissions)
+        const boxSubGroupIds = new Set(boxSubs.map((s) => s.group_id).filter(Boolean) as string[]);
+        const targetedGroupIds = new Set(orgGroups.filter((g) => g.feedback_box_id === b.id).map((g) => g.id));
+        const allAssociatedGroupIds = new Set([...boxSubGroupIds, ...targetedGroupIds]);
+
+        const active_groups: FeedbackBoxGroupSummary[] = orgGroups
+          .filter((g) => allAssociatedGroupIds.has(g.id))
+          .map((g) => {
+            const memberIds = new Set(
+              this.data.submission_group_members
+                .filter((m) => m.group_id === g.id)
+                .map((m) => m.submission_id)
+            );
+            const boxMembersInGroup = boxSubs.filter((s) => memberIds.has(s.id) || s.group_id === g.id);
+            const devices = new Set(boxMembersInGroup.map((s) => s.device_token_hash));
+            return {
+              id: g.id,
+              title: g.title,
+              type: g.type,
+              status: g.status,
+              submission_count: boxMembersInGroup.length > 0 ? boxMembersInGroup.length : 0,
+              estimated_devices: devices.size,
+            };
+          });
+
+        return {
+          ...b,
+          submission_count: boxSubs.length,
+          suggestions_count: boxSubs.filter((s) => s.type === 'suggestion').length,
+          complaints_count: boxSubs.filter((s) => s.type === 'complaint').length,
+          estimated_devices: uniqueDevices.size,
+          groups_count: active_groups.length,
+          active_groups,
+        };
+      });
   }
 
   public createFeedbackBox(payload: {
@@ -1068,21 +1113,60 @@ class D1DatabaseStore {
 
   // --- Groups ---
 
-  public listGroups(orgId: string, type?: SubmissionType): FeedbackGroup[] {
+  public listGroups(orgId: string, type?: SubmissionType, boxId?: string): FeedbackGroup[] {
+    const allBoxes = this.data.feedback_boxes.filter((b) => b.organization_id === orgId);
+
     return this.data.feedback_groups
       .filter((g) => g.organization_id === orgId && (!type || g.type === type))
       .map((g) => {
         const memberIds = new Set(
           this.data.submission_group_members.filter((m) => m.group_id === g.id).map((m) => m.submission_id)
         );
-        const members = this.data.submissions.filter((s) => memberIds.has(s.id));
+        const members = this.data.submissions.filter((s) => memberIds.has(s.id) || s.group_id === g.id);
         const uniqueDevices = new Set(members.map((s) => s.device_token_hash));
+
+        // Target box metadata if assigned
+        const targetBox = g.feedback_box_id ? allBoxes.find((b) => b.id === g.feedback_box_id) : undefined;
+
+        // Breakdown of head count by contributing Feedback Box / QR code
+        const boxContribMap = new Map<string, { count: number; devices: Set<string> }>();
+        members.forEach((m) => {
+          const bId = m.feedback_box_id || 'unassigned';
+          if (!boxContribMap.has(bId)) {
+            boxContribMap.set(bId, { count: 0, devices: new Set() });
+          }
+          const entry = boxContribMap.get(bId)!;
+          entry.count += 1;
+          if (m.device_token_hash) entry.devices.add(m.device_token_hash);
+        });
+
+        const boxes_breakdown: FeedbackGroupBoxContribution[] = Array.from(boxContribMap.entries())
+          .map(([bId, val]) => {
+            const b = allBoxes.find((box) => box.id === bId);
+            return {
+              box_id: bId,
+              box_code: b?.box_code || (bId === 'unassigned' ? 'GENERAL' : bId),
+              box_title: b?.title || (bId === 'unassigned' ? 'General Submissions' : 'Unknown Box'),
+              count: val.count,
+              devices: val.devices.size,
+            };
+          })
+          .sort((a, b) => b.count - a.count);
+
         return {
           ...g,
+          feedback_box_title: targetBox?.title,
+          feedback_box_code: targetBox?.box_code,
           submission_count: members.length,
           estimated_devices: uniqueDevices.size,
           sample_messages: members.slice(0, 3).map((m) => m.message),
+          boxes_breakdown,
         };
+      })
+      .filter((g) => {
+        if (!boxId || boxId === 'all') return true;
+        const hasSubmissionsFromBox = g.boxes_breakdown?.some((b) => b.box_id === boxId);
+        return g.feedback_box_id === boxId || hasSubmissionsFromBox;
       })
       .sort((a, b) => b.submission_count - a.submission_count);
   }
@@ -1137,13 +1221,21 @@ class D1DatabaseStore {
   public updateGroup(
     id: string,
     orgId: string,
-    updates: { title?: string; description?: string; status?: FeedbackGroup['status'] }
+    updates: {
+      title?: string;
+      description?: string;
+      status?: FeedbackGroup['status'];
+      feedback_box_id?: string | null;
+    }
   ): FeedbackGroup | undefined {
     const group = this.data.feedback_groups.find((g) => g.id === id && g.organization_id === orgId);
     if (!group) return undefined;
     if (updates.title) group.title = updates.title.trim();
     if (updates.description !== undefined) group.description = updates.description.trim();
     if (updates.status) group.status = updates.status;
+    if (updates.feedback_box_id !== undefined) {
+      group.feedback_box_id = updates.feedback_box_id || undefined;
+    }
     group.updated_at = new Date().toISOString();
     this.saveData();
     return group;
