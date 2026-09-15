@@ -161,7 +161,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 flex flex-col justify-between">
       {/* Top Header */}
       <header className="w-full bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-sky-600 flex items-center justify-center text-white shadow-sm shadow-sky-600/30">
               <MessageSquare className="w-5 h-5" />
@@ -192,7 +192,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
       </header>
 
       {/* Main Content Area */}
-      <main className="w-full max-w-xl mx-auto px-4 py-6 flex-1 flex flex-col justify-center">
+      <main className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 flex flex-col justify-center transition-all">
         {/* Box Picker Card */}
         <div className="mb-5 bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs relative">
           <div className="flex items-center justify-between">
@@ -520,7 +520,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
 
       {/* Footer */}
       <footer className="w-full py-4 text-center text-xs text-slate-400 border-t border-slate-200/60 bg-white/50">
-        <div className="max-w-xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>CloudBase Digital Feedback System</span>
           <span className="text-[11px] font-mono text-slate-400">
             Box: {selectedBoxCode} · Multi-tenant D1 Engine

@@ -1121,7 +1121,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
     <div className="min-h-screen bg-slate-100 flex flex-col">
       {/* Top Operator Navbar */}
       <header className="no-print bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between">
+        <div className="w-full max-w-[1920px] 2xl:max-w-[2400px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center text-slate-950 font-black text-sm shadow-sm">
               CB
@@ -1198,7 +1198,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
 
       {/* Subnav & Stat Highlights Bar */}
       <section className="no-print bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+        <div className="w-full max-w-[1920px] 2xl:max-w-[2400px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-4">
           {/* Top Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
@@ -1402,7 +1402,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
       </section>
 
       {/* Main Tab Content */}
-      <main className={`max-w-7xl mx-auto px-4 sm:px-6 py-6 flex-1 w-full ${placardModalBox || showAllPlacardsModal ? 'no-print' : ''}`}>
+      <main className={`w-full max-w-[1920px] 2xl:max-w-[2400px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-6 flex-1 ${placardModalBox || showAllPlacardsModal ? 'no-print' : ''}`}>
         {/* TAB: All / Suggestions / Complaints */}
         {['all', 'suggestions', 'complaints'].includes(activeTab) && (
           <div className="space-y-4">
@@ -1816,7 +1816,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                 {groups.map((group) => (
                   <div
                     key={group.id}
@@ -2088,7 +2088,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                       No boxes configured or no submissions yet.
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                       {stats.boxes_breakdown.map((b) => (
                         <div
                           key={b.box_code}
@@ -2297,7 +2297,7 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 gap-6">
                 {boxes.map((box) => {
                   const qrUrl = qrCodeDataUrls[box.box_code];
                   const baseOrigin = qrCustomDomain.trim()
