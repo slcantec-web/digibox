@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Info,
+  Languages,
   Lightbulb,
   Lock,
   MessageSquare,
@@ -16,6 +17,7 @@ import {
 import { getOrCreateDeviceToken } from '../lib/deviceToken';
 import { FeedbackBox, SubmissionType } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
+import { PublicLanguage, publicTranslations } from '../locales/publicTranslations';
 
 interface PublicFeedbackBoxProps {
   initialBoxCode?: string;
@@ -33,6 +35,24 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
   const [welcomeMessage, setWelcomeMessage] = useState<string>('');
   const [thankYouMessage, setThankYouMessage] = useState<string>('');
   const [loadingConfig, setLoadingConfig] = useState<boolean>(true);
+
+  // Language state (Sinhala & English toggle - Public View Only)
+  const [language, setLanguage] = useState<PublicLanguage>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('public_feedback_lang');
+      if (saved === 'si' || saved === 'en') return saved;
+    }
+    return 'en';
+  });
+
+  const handleLanguageChange = (lang: PublicLanguage) => {
+    setLanguage(lang);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('public_feedback_lang', lang);
+    }
+  };
+
+  const t = publicTranslations[language];
 
   // Form State
   const [category, setCategory] = useState<SubmissionType | null>(null);
@@ -98,12 +118,12 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
 
     const trimmed = message.trim();
     if (trimmed.length < 3) {
-      setErrorMessage('Please write at least 3 characters before submitting.');
+      setErrorMessage(t.errorMinLength);
       return;
     }
 
     if (trimmed.length > 2000) {
-      setErrorMessage('Your feedback exceeds the maximum allowed length of 2000 characters.');
+      setErrorMessage(t.errorMaxLength);
       return;
     }
 
@@ -134,13 +154,13 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
       }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to submit feedback. Please try again.');
+        throw new Error(data.error || t.errorGeneric);
       }
 
       setSubmittedResponseMsg(data.message || '');
       setSubmitted(true);
     } catch (err: any) {
-      setErrorMessage(err.message || 'An unexpected error occurred. Please check your network.');
+      setErrorMessage(err.message || t.errorNetwork);
     } finally {
       setSubmitting(false);
     }
@@ -161,22 +181,56 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 flex flex-col justify-between">
       {/* Top Header */}
       <header className="w-full bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-sky-600 flex items-center justify-center text-white shadow-sm shadow-sky-600/30">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-sky-600 flex items-center justify-center text-white shadow-sm shadow-sky-600/30 shrink-0">
               <MessageSquare className="w-5 h-5" />
             </div>
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-slate-900 leading-tight">
-                CloudBase Feedback
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold tracking-tight text-slate-900 leading-tight truncate">
+                {t.appTitle}
               </h1>
-              <p className="text-[11px] text-slate-500 font-medium leading-none">
+              <p className="text-[11px] text-slate-500 font-medium leading-none truncate">
                 {orgName}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Native Sinhala / English Toggle */}
+            <div
+              className="flex items-center rounded-xl bg-slate-100 p-0.5 sm:p-1 border border-slate-200 shadow-2xs"
+              role="group"
+              aria-label="Language selection"
+            >
+              <button
+                id="btn-lang-en"
+                type="button"
+                onClick={() => handleLanguageChange('en')}
+                className={`px-2 sm:px-2.5 py-1 text-xs font-bold rounded-lg transition ${
+                  language === 'en'
+                    ? 'bg-white text-sky-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Switch to English"
+              >
+                EN
+              </button>
+              <button
+                id="btn-lang-si"
+                type="button"
+                onClick={() => handleLanguageChange('si')}
+                className={`px-2 sm:px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1 ${
+                  language === 'si'
+                    ? 'bg-white text-sky-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="සිංහල භාෂාවට මාරු වන්න"
+              >
+                <span className="text-[12px] sm:text-[13px] leading-none">සිංහල</span>
+              </button>
+            </div>
+
             <PWAInstallButton />
             <button
               id="btn-switch-operator"
@@ -185,7 +239,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
               title="Open Operator Dashboard"
             >
               <Lock className="w-3.5 h-3.5 text-slate-500" />
-              <span>Operator</span>
+              <span className="hidden md:inline">{t.operatorLogin}</span>
             </button>
           </div>
         </div>
@@ -195,16 +249,16 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
       <main className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 flex flex-col justify-center transition-all">
         {/* Box Picker Card */}
         <div className="mb-5 bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="p-2 rounded-xl bg-sky-50 text-sky-700 border border-sky-100">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="p-2 rounded-xl bg-sky-50 text-sky-700 border border-sky-100 shrink-0">
                 <QrCode className="w-4 h-4" />
               </span>
-              <div>
-                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                  Feedback Box Location
+              <div className="min-w-0">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+                  {t.locationLabel}
                 </span>
-                <h2 className="text-sm font-semibold text-slate-900">
+                <h2 className="text-sm font-semibold text-slate-900 truncate">
                   {currentBox?.title || selectedBoxCode}
                 </h2>
               </div>
@@ -213,7 +267,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
             <button
               id="btn-toggle-box-selector"
               onClick={() => setBoxSelectorOpen(!boxSelectorOpen)}
-              className="flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-800 bg-sky-50/80 hover:bg-sky-100 px-2.5 py-1.5 rounded-lg border border-sky-200 transition"
+              className="shrink-0 flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-800 bg-sky-50/80 hover:bg-sky-100 px-2.5 py-1.5 rounded-lg border border-sky-200 transition"
             >
               <span>{selectedBoxCode}</span>
               <ChevronDown
@@ -232,7 +286,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
           {boxSelectorOpen && (
             <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
               <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-100 text-xs font-semibold text-slate-600">
-                Select Digital Feedback Box
+                {t.selectBoxTitle}
               </div>
               <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
                 {boxes.map((b) => (
@@ -250,7 +304,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   >
                     <div>
                       <div className="text-xs font-semibold text-slate-900">{b.title}</div>
-                      <div className="text-[11px] text-slate-500">{b.description}</div>
+                      <div className="text-[11px] text-slate-500">{b.description || t.defaultBoxDescription}</div>
                     </div>
                     <span className="text-[11px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
                       {b.box_code}
@@ -273,21 +327,21 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
             </div>
 
             <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-2">
-              Thank You!
+              {t.thankYouTitle}
             </h2>
-            <p className="text-base font-medium text-slate-700 mb-1">
-              {submittedResponseMsg || thankYouMessage || 'Your feedback has been submitted successfully.'}
+            <p className="text-base font-medium text-slate-700 mb-1 leading-relaxed">
+              {submittedResponseMsg || (language === 'si' ? t.thankYouMessageDefault : (thankYouMessage || t.thankYouMessageDefault))}
             </p>
-            <p className="text-sm text-slate-500 mb-6">
-              Your feedback helps us improve. You may close this page now.
+            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+              {t.thankYouSubtext}
             </p>
 
             <div className="rounded-xl bg-slate-50 border border-slate-100 p-3.5 mb-6 text-xs text-slate-600 flex items-center gap-2.5 justify-center">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>
                 {isAnonymous
-                  ? 'Your submission is 100% anonymous.'
-                  : `Submitted as: ${submitterName || 'Named Submitter'}`}
+                  ? t.anonymousConfirmedBadge
+                  : t.namedConfirmedBadge(submitterName)}
               </span>
             </div>
 
@@ -295,9 +349,9 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
               <button
                 id="btn-submit-another"
                 onClick={handleResetForm}
-                className="w-full py-3 px-4 rounded-xl bg-sky-600 text-white font-semibold text-sm hover:bg-sky-700 active:scale-[0.99] transition shadow-md shadow-sky-600/20"
+                className="w-full py-3.5 px-4 rounded-xl bg-sky-600 text-white font-semibold text-sm hover:bg-sky-700 active:scale-[0.99] transition shadow-md shadow-sky-600/20 cursor-pointer"
               >
-                Submit Another Feedback
+                {t.submitAnotherBtn}
               </button>
             </div>
           </div>
@@ -307,12 +361,41 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
             id="view-category-selection"
             className="bg-white border border-slate-200 rounded-3xl p-7 shadow-lg shadow-slate-200/50 text-center"
           >
+            {/* Helpful Native Language Quick Switcher */}
+            <div className="mb-4 inline-flex items-center gap-1.5 bg-slate-100/90 py-1 px-3 rounded-full border border-slate-200 text-xs">
+              <Languages className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-[11px] font-semibold text-slate-600">{t.languageSwitchPrompt}:</span>
+              <button
+                type="button"
+                onClick={() => handleLanguageChange('en')}
+                className={`px-2 py-0.5 rounded-md font-bold text-xs transition ${
+                  language === 'en'
+                    ? 'bg-white text-sky-700 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                English
+              </button>
+              <span className="text-slate-300">|</span>
+              <button
+                type="button"
+                onClick={() => handleLanguageChange('si')}
+                className={`px-2 py-0.5 rounded-md font-bold text-xs transition ${
+                  language === 'si'
+                    ? 'bg-white text-sky-700 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                සිංහල
+              </button>
+            </div>
+
             <div className="mb-6">
               <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                How can we help?
+                {t.helpQuestion}
               </h2>
-              <p className="mt-1 text-sm text-slate-600">
-                {welcomeMessage || 'Choose a feedback category to get started. No account needed.'}
+              <p className="mt-1.5 text-sm text-slate-600 leading-relaxed max-w-xl mx-auto">
+                {language === 'si' ? t.welcomeMessageDefault : (welcomeMessage || t.welcomeMessageDefault)}
               </p>
             </div>
 
@@ -324,17 +407,17 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   setCategory('suggestion');
                   setErrorMessage(null);
                 }}
-                className="group p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-400 bg-white hover:bg-amber-50/50 text-left transition duration-150 flex flex-col justify-between shadow-xs hover:shadow-md"
+                className="group p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-400 bg-white hover:bg-amber-50/50 text-left transition duration-150 flex flex-col justify-between shadow-xs hover:shadow-md cursor-pointer"
               >
                 <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                   <Lightbulb className="w-6 h-6" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 group-hover:text-amber-700 flex items-center gap-1.5">
-                    💡 Suggestion
+                    {t.suggestionTitle}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Have an idea or improvement? Share what would make things better.
+                    {t.suggestionDesc}
                   </p>
                 </div>
               </button>
@@ -346,26 +429,26 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   setCategory('complaint');
                   setErrorMessage(null);
                 }}
-                className="group p-5 rounded-2xl border-2 border-slate-200 hover:border-rose-400 bg-white hover:bg-rose-50/50 text-left transition duration-150 flex flex-col justify-between shadow-xs hover:shadow-md"
+                className="group p-5 rounded-2xl border-2 border-slate-200 hover:border-rose-400 bg-white hover:bg-rose-50/50 text-left transition duration-150 flex flex-col justify-between shadow-xs hover:shadow-md cursor-pointer"
               >
                 <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                   <AlertTriangle className="w-6 h-6" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 group-hover:text-rose-700 flex items-center gap-1.5">
-                    ⚠ Complaint
+                    {t.complaintTitle}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Experiencing a problem or issue? Let our operators look into it.
+                    {t.complaintDesc}
                   </p>
                 </div>
               </button>
             </div>
 
             {/* Anonymous note */}
-            <div className="mt-7 pt-5 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500">
-              <ShieldCheck className="w-4 h-4 text-sky-600" />
-              <span>You can submit this feedback anonymously.</span>
+            <div className="mt-7 pt-5 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500 leading-normal">
+              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>{t.anonymousGuarantee}</span>
             </div>
           </div>
         ) : (
@@ -374,15 +457,15 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
             id="view-feedback-form"
             className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 shadow-lg shadow-slate-200/50 animate-in fade-in-50 duration-150"
           >
-            {/* Header with Back button */}
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
+            {/* Header with Back button and category badge */}
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100 gap-2">
               <button
                 id="btn-back-to-category"
                 onClick={() => setCategory(null)}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 transition"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span>Change category</span>
+                <span>{t.backToCategory}</span>
               </button>
 
               <span
@@ -392,7 +475,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                     : 'bg-rose-100 text-rose-800'
                 }`}
               >
-                {category === 'suggestion' ? '💡 Suggestion' : '⚠ Complaint'}
+                {category === 'suggestion' ? t.suggestionBadge : t.complaintBadge}
               </span>
             </div>
 
@@ -402,7 +485,7 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   htmlFor="feedback-message"
                   className="block text-sm font-bold text-slate-900 mb-1.5"
                 >
-                  {category === 'suggestion' ? 'How can we improve?' : 'Please tell us about the issue.'}
+                  {category === 'suggestion' ? t.suggestionPrompt : t.complaintPrompt}
                   <span className="text-rose-500 ml-1">*</span>
                 </label>
                 <textarea
@@ -412,15 +495,15 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder={
                     category === 'suggestion'
-                      ? 'Write your suggestion here... What would you like to see improved or introduced?'
-                      : 'Describe your complaint here... What happened and what needs attention?'
+                      ? t.suggestionPlaceholder
+                      : t.complaintPlaceholder
                   }
                   required
                   className="w-full rounded-xl border border-slate-300 p-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-hidden transition resize-y"
                 />
                 <div className="flex justify-between items-center text-[11px] text-slate-400 mt-1 px-1">
-                  <span>Repeated submissions are valued and welcome.</span>
-                  <span>{message.length} / 2000</span>
+                  <span>{t.repeatedSubmissionsNote}</span>
+                  <span>{message.length} / 2000 {t.characterCount}</span>
                 </div>
               </div>
 
@@ -436,10 +519,10 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                   />
                   <div>
                     <span className="text-xs font-semibold text-slate-900 block">
-                      Submit anonymously
+                      {t.anonymousCheckboxLabel}
                     </span>
                     <span className="text-[11px] text-slate-500 block leading-normal mt-0.5">
-                      Your identity and contact info won't be recorded or shared.
+                      {t.anonymousCheckboxSubtext}
                     </span>
                   </div>
                 </label>
@@ -453,14 +536,14 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                       htmlFor="submitter-name"
                       className="block text-xs font-semibold text-slate-700 mb-1"
                     >
-                      Name (optional)
+                      {t.optionalNameLabel}
                     </label>
                     <input
                       id="submitter-name"
                       type="text"
                       value={submitterName}
                       onChange={(e) => setSubmitterName(e.target.value)}
-                      placeholder="Your name"
+                      placeholder={t.optionalNamePlaceholder}
                       className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-hidden"
                     />
                   </div>
@@ -470,14 +553,14 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                       htmlFor="submitter-contact"
                       className="block text-xs font-semibold text-slate-700 mb-1"
                     >
-                      Contact (optional)
+                      {t.optionalContactLabel}
                     </label>
                     <input
                       id="submitter-contact"
                       type="text"
                       value={submitterContact}
                       onChange={(e) => setSubmitterContact(e.target.value)}
-                      placeholder="Email, extension, or phone"
+                      placeholder={t.optionalContactPlaceholder}
                       className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-hidden"
                     />
                   </div>
@@ -503,12 +586,12 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
                 }`}
               >
                 {submitting ? (
-                  <span>Submitting...</span>
+                  <span>{t.submittingText}</span>
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
                     <span>
-                      Submit {category === 'suggestion' ? 'Suggestion' : 'Complaint'}
+                      {category === 'suggestion' ? t.submitSuggestionBtn : t.submitComplaintBtn}
                     </span>
                   </>
                 )}
@@ -521,9 +604,9 @@ export const PublicFeedbackBox: React.FC<PublicFeedbackBoxProps> = ({
       {/* Footer */}
       <footer className="w-full py-4 text-center text-xs text-slate-400 border-t border-slate-200/60 bg-white/50">
         <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>CloudBase Digital Feedback System</span>
+          <span>{t.footerSystemTitle}</span>
           <span className="text-[11px] font-mono text-slate-400">
-            Box: {selectedBoxCode} · Multi-tenant D1 Engine
+            Box: {selectedBoxCode} · {t.footerSecurityNote}
           </span>
         </div>
       </footer>

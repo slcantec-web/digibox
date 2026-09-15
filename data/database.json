@@ -87,6 +87,23 @@
   ],
   "submissions": [
     {
+      "id": "FB-000159",
+      "organization_id": "org-cantec-001",
+      "feedback_box_id": "box-canteen",
+      "feedback_box_title": "Canteen Feedback Box",
+      "feedback_box_code": "CTP-CANTEEN",
+      "type": "suggestion",
+      "message": "කැන්ටින් එකේ දිවා ආහාරය සඳහා තවත් එළවළු වර්ග කිහිපයක් එකතු කරන්නේ නම් ඉතා අගය කරමි.",
+      "is_anonymous": true,
+      "device_token_hash": "7f05363152485c5cf10695db040def71f0faa7a2e438dc9c8a0caddc7eca3979",
+      "security_hash": "12ca17b49af2289436f303e0166030a21e525d266e209267433801a8fd4071a0",
+      "message_hash": "8a2dc1841fe9257fcb44d5b042070867df3f05b1d14ebe04b013a440582f29b2",
+      "status": "New",
+      "submitted_at": "2026-09-15T05:51:43.350Z",
+      "updated_at": "2026-09-15T05:51:43.350Z",
+      "group_id": null
+    },
+    {
       "id": "FB-000158",
       "organization_id": "org-cantec-001",
       "feedback_box_id": "box-canteen",
@@ -1515,6 +1532,14 @@
       "created_at": "2026-09-15T05:25:25.659Z",
       "expires_at": "2026-09-22T05:25:25.659Z",
       "last_activity_at": "2026-09-15T05:25:25.659Z"
+    },
+    {
+      "id": "8ea0b2bbc985adc5c9b13e7f57d5b92b8148b81e8e5cac10f6bc390266ba3a7f",
+      "operator_id": "op-admin-1",
+      "session_hash": "a34f5fe06c07e520019b176144e0c5678959d34fb3184f0459e00310ba957ac3",
+      "created_at": "2026-09-15T05:51:45.088Z",
+      "expires_at": "2026-09-22T05:51:45.088Z",
+      "last_activity_at": "2026-09-15T05:51:45.088Z"
     }
   ],
   "daily_reports": [
