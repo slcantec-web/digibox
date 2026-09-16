@@ -2,6 +2,25 @@
  * CloudBase Digital Feedback Box - Cloudflare Worker Entry Point
  * Handles API endpoints backed by Cloudflare D1, serves React SPA via ASSETS,
  * and executes scheduled cron triggers for daily email reports.
+ *
+ * CHANGELOG (sync + auth fixes):
+ * - Submissions list/detail now compute duplicate_count / estimated_devices_count
+ *   (was always missing, so "head count" badges never showed in production).
+ * - POST /api/operator/groups now saves feedback_box_id (was silently dropped).
+ * - Added PATCH /api/operator/groups/:id (was completely missing -> Edit Group
+ *   modal 404'd in production).
+ * - GET /api/operator/groups now returns feedback_box_title/code, boxes_breakdown,
+ *   and sample_messages, matching what the dashboard renders.
+ * - GET /api/operator/boxes now returns submission_count, suggestions_count,
+ *   complaints_count, estimated_devices, groups_count, active_groups.
+ * - Daily report trigger now computes real top_suggestions and
+ *   complaints_status_counts instead of always returning empty/stub data.
+ * - Removed hardcoded backdoor credentials (admin/password123,
+ *   operator/cantec2026) from login and change-password checks. Update the
+ *   D1 seed data (see migrations/0001_initial_schema.sql) to your own
+ *   passwords before deploying.
+ * - Added basic abuse throttling to the org-code self-service password reset,
+ *   since it previously had no rate limit at all.
  */
 
 export interface Env {
@@ -77,7 +96,7 @@ async function ensureD1Schema(env: Env) {
     await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN contact_email TEXT DEFAULT 'management@cantec.lk'`).run().catch(() => {});
     await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN welcome_message TEXT DEFAULT 'Welcome to our Digital Feedback Box. Your voice helps us improve everyday.'`).run().catch(() => {});
     await env.DB.prepare(`ALTER TABLE organizations ADD COLUMN thank_you_message TEXT DEFAULT 'Thank you for your valuable feedback! Our management team reviews all submissions promptly.'`).run().catch(() => {});
-    
+
     // 2. Ensure daily_reports recipient_email column exists
     await env.DB.prepare(`ALTER TABLE daily_reports ADD COLUMN recipient_email TEXT`).run().catch(() => {});
 
@@ -112,6 +131,74 @@ async function ensureD1Schema(env: Env) {
   } catch (err) {
     console.warn('Schema self-check notice:', err);
   }
+}
+
+// --- Enrichment helpers -----------------------------------------------
+
+// Adds duplicate_count / estimated_devices_count to a WHERE-filtered submissions query.
+// Duplicates are computed either by shared group_id, or (if ungrouped) by identical message_hash.
+const DUPLICATE_COUNT_SQL = `
+  (CASE WHEN s.group_id IS NOT NULL THEN
+      (SELECT COUNT(*) FROM submissions s2 WHERE s2.group_id = s.group_id)
+    ELSE
+      (SELECT COUNT(*) FROM submissions s2 WHERE s2.message_hash = s.message_hash AND s2.organization_id = s.organization_id)
+    END) as duplicate_count,
+  (CASE WHEN s.group_id IS NOT NULL THEN
+      (SELECT COUNT(DISTINCT s2.device_token_hash) FROM submissions s2 WHERE s2.group_id = s.group_id)
+    ELSE
+      (SELECT COUNT(DISTINCT s2.device_token_hash) FROM submissions s2 WHERE s2.message_hash = s.message_hash AND s2.organization_id = s.organization_id)
+    END) as estimated_devices_count
+`;
+
+// Builds { feedback_box_title, feedback_box_code, boxes_breakdown, sample_messages } for one group.
+async function enrichGroup(env: Env, g: any) {
+  let feedback_box_title: string | undefined;
+  let feedback_box_code: string | undefined;
+  if (g.feedback_box_id) {
+    const box: any = await env.DB.prepare(`SELECT box_code, title FROM feedback_boxes WHERE id = ?`)
+      .bind(g.feedback_box_id)
+      .first();
+    if (box) {
+      feedback_box_title = box.title;
+      feedback_box_code = box.box_code;
+    }
+  }
+
+  const { results: members } = await env.DB.prepare(
+    `SELECT s.id, s.message, s.feedback_box_id, s.device_token_hash,
+            b.box_code as box_code, b.title as box_title
+     FROM submissions s
+     LEFT JOIN feedback_boxes b ON s.feedback_box_id = b.id
+     WHERE s.group_id = ?
+     ORDER BY s.submitted_at DESC`
+  )
+    .bind(g.id)
+    .all();
+
+  const boxMap = new Map<string, { box_id: string; box_code: string; box_title: string; count: number; devices: Set<string> }>();
+  (members || []).forEach((m: any) => {
+    const key = m.feedback_box_id || 'unassigned';
+    if (!boxMap.has(key)) {
+      boxMap.set(key, {
+        box_id: key,
+        box_code: m.box_code || 'GENERAL',
+        box_title: m.box_title || 'General Submissions',
+        count: 0,
+        devices: new Set(),
+      });
+    }
+    const entry = boxMap.get(key)!;
+    entry.count += 1;
+    if (m.device_token_hash) entry.devices.add(m.device_token_hash);
+  });
+
+  const boxes_breakdown = Array.from(boxMap.values())
+    .map((e) => ({ box_id: e.box_id, box_code: e.box_code, box_title: e.box_title, count: e.count, devices: e.devices.size }))
+    .sort((a, b) => b.count - a.count);
+
+  const sample_messages = (members || []).slice(0, 3).map((m: any) => m.message);
+
+  return { ...g, feedback_box_title, feedback_box_code, boxes_breakdown, sample_messages };
 }
 
 export default {
@@ -209,17 +296,28 @@ export default {
           }
 
           const deviceTokenHash = await sha256(device_token || `anon_${Date.now()}_${Math.random()}`);
-          const messageHash = await sha256(trimmedMsg.toLowerCase().replace(/\\s+/g, ' '));
+          const messageHash = await sha256(trimmedMsg.toLowerCase().replace(/\s+/g, ' '));
           const subId = `FB-${Date.now().toString().slice(-6)}`;
           const now = new Date().toISOString();
+
+          // Auto-match an existing group by title so head count aggregates correctly,
+          // mirroring the local dev (Express) behavior in server/db.ts.
+          const matchedGroup: any = await env.DB.prepare(
+            `SELECT id, title FROM feedback_groups
+             WHERE organization_id = ? AND type = ?
+               AND (LOWER(title) = LOWER(?) OR INSTR(LOWER(?), LOWER(title)) > 0)
+             LIMIT 1`
+          )
+            .bind(box.organization_id, type, trimmedMsg, trimmedMsg)
+            .first();
 
           // Save submission
           await env.DB.prepare(
             `INSERT INTO submissions (
               id, organization_id, feedback_box_id, type, message,
               submitter_name, submitter_contact, is_anonymous,
-              device_token_hash, message_hash, status, submitted_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New', ?, ?)`
+              device_token_hash, message_hash, status, group_id, submitted_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New', ?, ?, ?)`
           )
             .bind(
               subId,
@@ -232,10 +330,20 @@ export default {
               anonymous ? 1 : 0,
               deviceTokenHash,
               messageHash,
+              matchedGroup ? matchedGroup.id : null,
               now,
               now
             )
             .run();
+
+          if (matchedGroup) {
+            await env.DB.prepare(
+              `INSERT INTO submission_group_members (id, submission_id, group_id, created_at) VALUES (?, ?, ?, ?)`
+            )
+              .bind(`sgm-${subId}`, subId, matchedGroup.id, now)
+              .run()
+              .catch(() => {});
+          }
 
           // Return generic confirmation to public (No IDs or hashes exposed!)
           const orgRecord = await env.DB.prepare(`SELECT thank_you_message FROM organizations WHERE id = ?`).bind(box.organization_id).first();
@@ -283,11 +391,7 @@ export default {
             if (op && op.role === 'admin') {
               const salt = op.password_salt || '';
               const hColon = await sha256(admin_password + ':' + salt);
-              const hNoColon = await sha256(admin_password + salt);
-              const isMatch =
-                op.password_hash === hColon ||
-                op.password_hash === hNoColon ||
-                (op.username === 'admin' && admin_password === 'password123');
+              const isMatch = op.password_hash === hColon;
               if (isMatch) {
                 authorized = true;
                 targetOrgId = op.organization_id;
@@ -308,10 +412,7 @@ export default {
                 if (adminOp) {
                   const salt = adminOp.password_salt || '';
                   const hColon = await sha256(admin_password + ':' + salt);
-                  const isMatch =
-                    adminOp.password_hash === hColon ||
-                    (adminOp.username === 'admin' && admin_password === 'password123');
-                  if (isMatch) authorized = true;
+                  if (adminOp.password_hash === hColon) authorized = true;
                 }
               }
             }
@@ -356,6 +457,9 @@ export default {
         }
 
         // Public: Reset user/operator password with organization verification code
+        // NOTE: this is a self-service reset intended for the demo. It is throttled
+        // below, but treat the org code as a shared secret in production — rotate it
+        // and/or gate this route behind an env flag if you don't want it public.
         if (path === '/api/public/reset-password' && request.method === 'POST') {
           let body: any = {};
           try {
@@ -376,12 +480,37 @@ export default {
             return json({ error: `No user account found with username "${cleanUser}".` }, 404);
           }
 
+          // Throttle: max 5 reset attempts per operator per rolling hour.
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+          const recentAttempts: any = await env.DB.prepare(
+            `SELECT COUNT(*) as c FROM password_reset_logs WHERE operator_id = ? AND created_at > ?`
+          ).bind(op.id, oneHourAgo).first();
+          if ((recentAttempts?.c || 0) >= 5) {
+            return json(
+              { error: 'Too many password reset attempts for this account. Please try again later.' },
+              429
+            );
+          }
+
           const org: any = await env.DB.prepare(
             `SELECT * FROM organizations WHERE id = ?`
           ).bind(op.organization_id).first();
 
           const providedCode = String(org_code || '').trim().toUpperCase();
           if (org && providedCode !== org.code.toUpperCase()) {
+            const clientIp =
+              request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '';
+            await env.DB.prepare(
+              `INSERT INTO password_reset_logs (id, operator_id, username, reset_by, ip_address, status) VALUES (?, ?, ?, ?, ?, ?)`
+            ).bind(
+              `prl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              op.id,
+              op.username,
+              'org_code',
+              clientIp,
+              'failed'
+            ).run().catch(() => {});
+
             return json(
               {
                 error: `Invalid Organization Verification Code. Expected organization code (e.g., "${org.code}").`,
@@ -475,21 +604,19 @@ export default {
           const hashWithoutColon = await sha256(password + salt);
           const rawHash = await sha256(password);
 
-          // Allow hash match, or default admin/operator credentials fallback
-          const isKnownAdmin = op.username === 'admin' && password === 'password123';
-          const isKnownOperator = op.username === 'operator' && password === 'cantec2026';
+          // NOTE: hardcoded demo-credential fallback has been removed. Only a
+          // hash stored in D1 can authenticate now. Seed your own hashes via
+          // migrations/0001_initial_schema.sql or the "Reset Password" flow.
           const isMatch =
             op.password_hash === hashWithColon ||
             op.password_hash === hashWithoutColon ||
-            op.password_hash === rawHash ||
-            isKnownAdmin ||
-            isKnownOperator;
+            op.password_hash === rawHash;
 
           if (!isMatch) {
             return json({ error: 'Invalid username or password.' }, 401);
           }
 
-          // If hash was outdated or was initial seed, sync it to hashWithColon
+          // If hash was outdated (matched the no-colon/raw legacy formats), sync it to hashWithColon
           if (op.password_hash !== hashWithColon) {
             try {
               await env.DB.prepare(
@@ -574,13 +701,10 @@ export default {
           const salt = op.password_salt || '';
           const hashWithColon = await sha256(currentPass + ':' + salt);
           const hashWithoutColon = await sha256(currentPass + salt);
-          const isKnownAdmin = op.username === 'admin' && currentPass === 'password123';
-          const isKnownOperator = op.username === 'operator' && currentPass === 'cantec2026';
+          // NOTE: hardcoded demo-credential fallback removed here as well.
           const isMatch =
             op.password_hash === hashWithColon ||
-            op.password_hash === hashWithoutColon ||
-            isKnownAdmin ||
-            isKnownOperator;
+            op.password_hash === hashWithoutColon;
 
           if (!isMatch) {
             return json({ error: 'Current password is incorrect.' }, 401);
@@ -734,7 +858,8 @@ export default {
           const querySql = `
             SELECT s.*, b.box_code as feedback_box_code, b.title as feedback_box_title,
                    g.title as group_title,
-                   (SELECT COUNT(*) FROM feedback_notes n WHERE n.submission_id = s.id) as notes_count
+                   (SELECT COUNT(*) FROM feedback_notes n WHERE n.submission_id = s.id) as notes_count,
+                   ${DUPLICATE_COUNT_SQL}
             FROM submissions s
             LEFT JOIN feedback_boxes b ON s.feedback_box_id = b.id
             LEFT JOIN feedback_groups g ON s.group_id = g.id
@@ -758,7 +883,8 @@ export default {
         if (path.startsWith('/api/operator/submissions/') && request.method === 'GET') {
           const subId = path.split('/')[4];
           const sub = await env.DB.prepare(
-            `SELECT s.*, b.box_code as feedback_box_code, b.title as feedback_box_title, g.title as group_title
+            `SELECT s.*, b.box_code as feedback_box_code, b.title as feedback_box_title, g.title as group_title,
+                    ${DUPLICATE_COUNT_SQL}
              FROM submissions s
              LEFT JOIN feedback_boxes b ON s.feedback_box_id = b.id
              LEFT JOIN feedback_groups g ON s.group_id = g.id
@@ -797,14 +923,36 @@ export default {
           }
 
           if (group_id !== undefined) {
+            // Keep submission_group_members in sync so head-count breakdowns stay correct.
+            await env.DB.prepare(`DELETE FROM submission_group_members WHERE submission_id = ?`)
+              .bind(subId)
+              .run()
+              .catch(() => {});
+
             await env.DB.prepare(
               `UPDATE submissions SET group_id = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?`
             )
               .bind(group_id || null, subId, auth.operator.organization_id)
               .run();
+
+            if (group_id) {
+              await env.DB.prepare(
+                `INSERT INTO submission_group_members (id, submission_id, group_id, created_at) VALUES (?, ?, ?, datetime('now'))`
+              )
+                .bind(`sgm-${subId}-${Date.now()}`, subId, group_id)
+                .run()
+                .catch(() => {});
+            }
           }
 
-          const updated = await env.DB.prepare(`SELECT * FROM submissions WHERE id = ?`)
+          const updated = await env.DB.prepare(
+            `SELECT s.*, b.box_code as feedback_box_code, b.title as feedback_box_title, g.title as group_title,
+                    ${DUPLICATE_COUNT_SQL}
+             FROM submissions s
+             LEFT JOIN feedback_boxes b ON s.feedback_box_id = b.id
+             LEFT JOIN feedback_groups g ON s.group_id = g.id
+             WHERE s.id = ?`
+          )
             .bind(subId)
             .first();
           return json(updated);
@@ -831,7 +979,51 @@ export default {
             const { results: boxes } = await env.DB.prepare(
               `SELECT * FROM feedback_boxes WHERE organization_id = ? ORDER BY created_at DESC`
             ).bind(auth.operator.organization_id).all();
-            return json({ boxes: boxes || [] });
+
+            const enriched = [];
+            for (const b of boxes || []) {
+              const statsRow: any = await env.DB.prepare(
+                `SELECT COUNT(*) as total,
+                        SUM(CASE WHEN type='suggestion' THEN 1 ELSE 0 END) as suggestions,
+                        SUM(CASE WHEN type='complaint' THEN 1 ELSE 0 END) as complaints,
+                        COUNT(DISTINCT device_token_hash) as devices
+                 FROM submissions WHERE feedback_box_id = ?`
+              )
+                .bind(b.id)
+                .first();
+
+              const { results: groupRows } = await env.DB.prepare(
+                `SELECT g.id, g.title, g.type,
+                        (SELECT COUNT(*) FROM submissions s WHERE s.group_id = g.id AND s.feedback_box_id = ?) as submission_count,
+                        (SELECT COUNT(DISTINCT s.device_token_hash) FROM submissions s WHERE s.group_id = g.id AND s.feedback_box_id = ?) as estimated_devices
+                 FROM feedback_groups g
+                 WHERE g.organization_id = ?
+                   AND (g.feedback_box_id = ? OR EXISTS (
+                     SELECT 1 FROM submissions s2 WHERE s2.group_id = g.id AND s2.feedback_box_id = ?
+                   ))`
+              )
+                .bind(b.id, b.id, auth.operator.organization_id, b.id, b.id)
+                .all();
+
+              enriched.push({
+                ...b,
+                submission_count: statsRow?.total || 0,
+                suggestions_count: statsRow?.suggestions || 0,
+                complaints_count: statsRow?.complaints || 0,
+                estimated_devices: statsRow?.devices || 0,
+                groups_count: (groupRows || []).length,
+                active_groups: (groupRows || []).map((g: any) => ({
+                  id: g.id,
+                  title: g.title,
+                  type: g.type,
+                  submission_count: g.submission_count || 0,
+                  estimated_devices: g.estimated_devices || 0,
+                  status: 'Active',
+                })),
+              });
+            }
+
+            return json({ boxes: enriched });
           }
 
           if (request.method === 'POST') {
@@ -922,7 +1114,7 @@ export default {
             if (existing) return json({ error: 'Username already in use' }, 400);
 
             const salt = crypto.randomUUID();
-            const hash = await sha256(password + salt);
+            const hash = await sha256(password + ':' + salt);
             const newId = `op-${Date.now()}`;
 
             await env.DB.prepare(
@@ -1112,35 +1304,108 @@ export default {
         // Groups: List and Create
         if (path === '/api/operator/groups') {
           if (request.method === 'GET') {
-            const { results: groups } = await env.DB.prepare(
+            const type = url.searchParams.get('type');
+            const boxIdFilter = url.searchParams.get('box_id');
+
+            const groupBinds: any[] = [auth.operator.organization_id];
+            let groupWhere = `WHERE g.organization_id = ?`;
+            if (type) {
+              groupWhere += ` AND g.type = ?`;
+              groupBinds.push(type);
+            }
+
+            const { results: groupRows } = await env.DB.prepare(
               `SELECT g.*, 
                       COUNT(s.id) as submission_count,
                       COUNT(DISTINCT s.device_token_hash) as estimated_devices
                FROM feedback_groups g
                LEFT JOIN submissions s ON s.group_id = g.id
-               WHERE g.organization_id = ?
+               ${groupWhere}
                GROUP BY g.id
                ORDER BY submission_count DESC`
             )
-              .bind(auth.operator.organization_id)
+              .bind(...groupBinds)
               .all();
 
-            return json({ groups: groups || [] });
+            const enrichedGroups = [];
+            for (const g of groupRows || []) {
+              enrichedGroups.push(await enrichGroup(env, g));
+            }
+
+            const filtered =
+              boxIdFilter && boxIdFilter !== 'all'
+                ? enrichedGroups.filter(
+                    (g: any) =>
+                      g.feedback_box_id === boxIdFilter ||
+                      (g.boxes_breakdown || []).some((b: any) => b.box_id === boxIdFilter)
+                  )
+                : enrichedGroups;
+
+            return json({ groups: filtered });
           }
 
           if (request.method === 'POST') {
-            const { title, type, description } = (await request.json()) as any;
+            const { title, type, description, feedback_box_id } = (await request.json()) as any;
             if (!title) return json({ error: 'Group title required' }, 400);
 
             const newId = `grp-${Date.now()}`;
             await env.DB.prepare(
-              `INSERT INTO feedback_groups (id, organization_id, type, title, description) VALUES (?, ?, ?, ?, ?)`
+              `INSERT INTO feedback_groups (id, organization_id, feedback_box_id, type, title, description) VALUES (?, ?, ?, ?, ?, ?)`
             )
-              .bind(newId, auth.operator.organization_id, type || 'suggestion', title.trim(), description || '')
+              .bind(
+                newId,
+                auth.operator.organization_id,
+                feedback_box_id || null,
+                type || 'suggestion',
+                title.trim(),
+                description || ''
+              )
               .run();
 
-            return json({ success: true, id: newId });
+            const created = await env.DB.prepare(`SELECT * FROM feedback_groups WHERE id = ?`).bind(newId).first();
+            return json({ success: true, id: newId, group: created ? await enrichGroup(env, { ...created, submission_count: 0, estimated_devices: 0 }) : undefined });
           }
+        }
+
+        // Update group (title, description, status, target box)
+        if (path.startsWith('/api/operator/groups/') && request.method === 'PATCH') {
+          const groupId = path.split('/')[4];
+          const { title, description, status, feedback_box_id } = (await request.json()) as any;
+
+          await env.DB.prepare(
+            `UPDATE feedback_groups SET
+              title = COALESCE(?, title),
+              description = COALESCE(?, description),
+              status = COALESCE(?, status),
+              feedback_box_id = ?,
+              updated_at = datetime('now')
+             WHERE id = ? AND organization_id = ?`
+          )
+            .bind(
+              title ? title.trim() : null,
+              description !== undefined ? description.trim() : null,
+              status || null,
+              feedback_box_id === undefined ? null : feedback_box_id || null,
+              groupId,
+              auth.operator.organization_id
+            )
+            .run();
+
+          const updatedRow: any = await env.DB.prepare(
+            `SELECT g.*, 
+                    COUNT(s.id) as submission_count,
+                    COUNT(DISTINCT s.device_token_hash) as estimated_devices
+             FROM feedback_groups g
+             LEFT JOIN submissions s ON s.group_id = g.id
+             WHERE g.id = ? AND g.organization_id = ?
+             GROUP BY g.id`
+          )
+            .bind(groupId, auth.operator.organization_id)
+            .first();
+
+          if (!updatedRow) return json({ error: 'Group not found' }, 404);
+
+          return json({ success: true, group: await enrichGroup(env, updatedRow) });
         }
 
         // Delete group
@@ -1151,6 +1416,13 @@ export default {
           )
             .bind(groupId, auth.operator.organization_id)
             .run();
+
+          await env.DB.prepare(
+            `DELETE FROM submission_group_members WHERE group_id = ?`
+          )
+            .bind(groupId)
+            .run()
+            .catch(() => {});
 
           await env.DB.prepare(
             `DELETE FROM feedback_groups WHERE id = ? AND organization_id = ?`
@@ -1344,12 +1616,13 @@ export default {
         if (path === '/api/operator/reports/daily-trigger' && request.method === 'POST') {
           const body: any = await request.json().catch(() => ({}));
           const dateStr = new Date().toISOString().slice(0, 10);
+          const orgId = auth.operator.organization_id;
 
           // Check duplicate
           const existing = await env.DB.prepare(
             `SELECT * FROM daily_reports WHERE organization_id = ? AND report_date = ?`
           )
-            .bind(auth.operator.organization_id, dateStr)
+            .bind(orgId, dateStr)
             .first();
 
           if (existing && !body.force) {
@@ -1366,29 +1639,73 @@ export default {
 
           // Build report payload
           const org = await env.DB.prepare(`SELECT * FROM organizations WHERE id = ?`)
-            .bind(auth.operator.organization_id)
+            .bind(orgId)
             .first();
 
           const suggCount = await env.DB.prepare(
             `SELECT COUNT(*) as c FROM submissions WHERE organization_id = ? AND type = 'suggestion'`
           )
-            .bind(auth.operator.organization_id)
+            .bind(orgId)
             .first();
 
           const compCount = await env.DB.prepare(
             `SELECT COUNT(*) as c FROM submissions WHERE organization_id = ? AND type = 'complaint'`
           )
-            .bind(auth.operator.organization_id)
+            .bind(orgId)
             .first();
+
+          // Real top-repeated-suggestion groups (was previously always []).
+          const { results: topGroupRows } = await env.DB.prepare(
+            `SELECT g.title as text,
+                    COUNT(sgm.submission_id) as submissions_count,
+                    COUNT(DISTINCT s.device_token_hash) as estimated_devices
+             FROM feedback_groups g
+             LEFT JOIN submission_group_members sgm ON sgm.group_id = g.id
+             LEFT JOIN submissions s ON s.id = sgm.submission_id
+             WHERE g.organization_id = ? AND g.type = 'suggestion'
+             GROUP BY g.id
+             HAVING submissions_count > 0
+             ORDER BY submissions_count DESC
+             LIMIT 5`
+          )
+            .bind(orgId)
+            .all();
+
+          const top_suggestions = (topGroupRows || []).map((g: any) => ({
+            text: g.text,
+            submissions_count: g.submissions_count,
+            estimated_devices: g.estimated_devices || 1,
+          }));
+
+          // Real complaint status breakdown (was previously a single-bucket stub).
+          const { results: statusRows } = await env.DB.prepare(
+            `SELECT status, COUNT(*) as count FROM submissions WHERE organization_id = ? AND type = 'complaint' GROUP BY status`
+          )
+            .bind(orgId)
+            .all();
+          const complaints_status_counts: Record<string, number> = {};
+          (statusRows || []).forEach((r: any) => {
+            complaints_status_counts[r.status] = r.count;
+          });
+
+          // Real recent complaints (was previously always []).
+          const { results: recentComplaintRows } = await env.DB.prepare(
+            `SELECT message FROM submissions WHERE organization_id = ? AND type = 'complaint' ORDER BY submitted_at DESC LIMIT 5`
+          )
+            .bind(orgId)
+            .all();
+          const recent_complaints = (recentComplaintRows || []).map((r: any) =>
+            r.message.length > 60 ? r.message.slice(0, 60) + '...' : r.message
+          );
 
           const payload = {
             organization_name: org.name,
             report_date: dateStr,
             total_suggestions: suggCount?.c || 0,
-            top_suggestions: [],
+            top_suggestions,
             total_complaints: compCount?.c || 0,
-            complaints_status_counts: { New: compCount?.c || 0 },
-            recent_complaints: [],
+            complaints_status_counts,
+            recent_complaints,
           };
 
           const reportId = `rep-${Date.now()}`;
@@ -1396,7 +1713,7 @@ export default {
             `INSERT OR REPLACE INTO daily_reports (id, organization_id, report_date, status, sent_at, report_payload)
              VALUES (?, ?, ?, 'sent', datetime('now'), ?)`
           )
-            .bind(reportId, auth.operator.organization_id, dateStr, JSON.stringify(payload))
+            .bind(reportId, orgId, dateStr, JSON.stringify(payload))
             .run();
 
           return json({
@@ -1404,7 +1721,7 @@ export default {
             message: 'Daily report generated and delivered successfully.',
             report: {
               id: reportId,
-              organization_id: auth.operator.organization_id,
+              organization_id: orgId,
               report_date: dateStr,
               status: 'sent',
               sent_at: new Date().toISOString(),
