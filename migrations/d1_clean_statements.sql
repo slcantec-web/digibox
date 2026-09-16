@@ -1,3 +1,11 @@
+-- ============================================================
+-- This file was already correct (uses INSERT OR REPLACE with the
+-- right sha256(password + ':' + salt) hashes) and needs no changes.
+-- Copied here unmodified so the whole migrations/ folder is
+-- consistent and upload-ready. Use this one if you need to
+-- re-run migrations against an existing D1 database that already
+-- has some data, since it uses OR REPLACE for operators.
+-- ============================================================
 CREATE TABLE IF NOT EXISTS organizations (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

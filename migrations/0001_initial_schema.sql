@@ -1,6 +1,19 @@
 -- ============================================================
 -- CloudBase Digital Feedback Box - Cloudflare D1 Migration
 -- File: migrations/0001_initial_schema.sql
+--
+-- FIX: the previous version of this file seeded operator password
+-- hashes that did NOT match sha256(password + ':' + salt) for the
+-- documented demo passwords (admin/password123, operator/cantec2026).
+-- Login only worked before because worker/index.ts had a hardcoded
+-- credential fallback, which has now been removed. The hashes below
+-- are the correct sha256(password + ':' + salt) values.
+--
+-- IMPORTANT: change these two passwords (and ideally the usernames)
+-- before deploying somewhere real. You can do that from the dashboard
+-- (Change Password / Reset Password) once you're logged in once with
+-- the seeded credentials below, or by re-hashing and re-running an
+-- UPDATE statement against the operators table.
 -- ============================================================
 
 -- 1. Organizations
@@ -212,12 +225,14 @@ VALUES
   ('box-maintenance', 'org-cantec-001', 'CTP-MAINTENANCE', 'Maintenance Box', 'Facilities maintenance, repairs, washrooms, HVAC, and parking.', 1);
 
 -- Insert Default Operators
--- admin / password123 (hash: f42a7bb862ba94a4c6a959082eb4c9fb60e34c9c1ef3a31c5d9e504c54143ca3 with salt: cantec_salt_123)
--- operator / cantec2026 (hash: 7d6c6aa3fd8fef499119cff74a5840bc2b885ffae6a33758117769931b26f5f3 with salt: op_salt_456)
+-- admin / password123    (hash = sha256("password123:cantec_salt_123"))
+-- operator / cantec2026  (hash = sha256("cantec2026:op_salt_456"))
+-- These hashes were verified against worker/index.ts's login check.
+-- CHANGE THESE PASSWORDS after your first successful login.
 INSERT OR IGNORE INTO operators (id, organization_id, username, password_hash, password_salt, role, status)
 VALUES
-  ('op-admin-1', 'org-cantec-001', 'admin', 'f42a7bb862ba94a4c6a959082eb4c9fb60e34c9c1ef3a31c5d9e504c54143ca3', 'cantec_salt_123', 'admin', 'active'),
-  ('op-staff-1', 'org-cantec-001', 'operator', '7d6c6aa3fd8fef499119cff74a5840bc2b885ffae6a33758117769931b26f5f3', 'op_salt_456', 'operator', 'active');
+  ('op-admin-1', 'org-cantec-001', 'admin', 'd64d0f6dc31a92e912fb664f0e52a29b1014bc6dd3b582b42c20832a3496ab68', 'cantec_salt_123', 'admin', 'active'),
+  ('op-staff-1', 'org-cantec-001', 'operator', '9256d0405b133b23ad07141c1d7b25295f21957df17a7984b5c2dd64edbef385', 'op_salt_456', 'operator', 'active');
 
 -- Insert Initial Seed Groups
 INSERT OR IGNORE INTO feedback_groups (id, organization_id, feedback_box_id, type, title, description, status)
